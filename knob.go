@@ -12,6 +12,7 @@ var (
 	counter  atomic.Int32
 	registry map[int]*state
 	regMux   sync.RWMutex
+	regOnce  sync.Once
 )
 
 type state struct {
@@ -80,9 +81,9 @@ func Register[T any](def *Definition[T]) Knob[T] {
 	for _, o := range def.Origins {
 		origins[o] = struct{}{}
 	}
-	if registry == nil {
+	regOnce.Do(func() {
 		registry = make(map[int]*state)
-	}
+	})
 	s := &state{
 		initialize: def.initializer,
 		origins:    origins,

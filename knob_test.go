@@ -57,6 +57,7 @@ func TestCleanEnvvar(t *testing.T) {
 }
 
 func TestSet(t *testing.T) {
+	t.Parallel()
 	def := &knobs.Definition[string]{
 		Default: "default",
 	}
