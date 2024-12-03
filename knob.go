@@ -20,7 +20,7 @@ type state struct {
 	current    any
 	initialize initializer
 	origins    map[Origin]struct{}
-	lastOrigin Origin
+	origin     Origin // Last origin
 	parent     int
 }
 
@@ -47,7 +47,7 @@ func (def *Definition[T]) initializer(s *state) {
 		s.current = def.Default
 		return
 	}
-	s.lastOrigin = Env
+	s.origin = Env
 	if def.CleanEnvvar == nil {
 		s.current = v
 		return
@@ -168,6 +168,6 @@ func Set[T any](kn Knob[T], value T, origin Origin) {
 			return
 		}
 	}
-	s.lastOrigin = origin
+	s.origin = origin
 	s.current = value
 }
