@@ -56,6 +56,8 @@ func (def *Definition[T]) initializer(s *state) {
 }
 
 // Origin defines a known configuration source.
+// It's used to track where the configuration value comes from and
+// self-document the code. Library users can define their own origins.
 type Origin int
 
 const (
@@ -97,8 +99,10 @@ func Register[T any](def *Definition[T]) Knob[T] {
 	return knob
 }
 
-// Derive creates a new configuration based on a parent.
-// It returns a Knob that can be used to retrieve the configuration value associated with the parent.
+// Derive creates a new configuration based on a parent knob.
+// It returns a Knob that can be used to retrieve the configuration value associated with the parent or
+// override it with a new value.
+// The parent knob can be another derived knob.
 // It's not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
 func Derive[T any](parent Knob[T]) Knob[T] {
 	dk := int(counter.Add(1))
