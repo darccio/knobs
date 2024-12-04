@@ -17,6 +17,7 @@ var (
 
 type state struct {
 	sync.RWMutex
+	once       sync.Once
 	current    any
 	initialize initializer
 	origins    map[Origin]struct{}
@@ -26,33 +27,43 @@ type state struct {
 
 type initializer func(*state)
 
+// EnvResolver represents an env var and an optional Remapper for modifying the value set at the env var
+type EnvResolver struct {
+	Key      string
+	Remapper func(v string) string
+}
+
+// GetValue returns the value stored on the env var of e.Key
+// If e has a Remapper, value is put through the Remapper before getting returned
+func (e *EnvResolver) GetValue() string {
+	if v := strings.TrimSpace(os.Getenv(e.Key)); e.Remapper == nil {
+		return v
+	} else {
+		return e.Remapper(v)
+	}
+}
+
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default     T
-	Origins     []Origin // Default and Env origins are implicit
-	EnvVars     []string
-	CleanEnvvar func(string) T
+	Default any
+	Origins []Origin      // Default and Env origins are implicit
+	EnvVars []EnvResolver // In order of precedence
 }
 
 func (def *Definition[T]) initializer(s *state) {
-	var v string
-	for _, envVar := range def.EnvVars {
-		v = os.Getenv(envVar)
-		v = strings.TrimSpace(v)
-		if v != "" {
+	var val string
+	for _, e := range def.EnvVars {
+		val = e.GetValue()
+		if val != "" {
 			break
 		}
 	}
-	if v == "" {
+	if val == "" {
 		s.current = def.Default
 		return
 	}
+	s.current = val
 	s.origin = Env
-	if def.CleanEnvvar == nil {
-		s.current = v
-		return
-	}
-	s.current = def.CleanEnvvar(v)
 }
 
 // Origin defines a known configuration source.
@@ -127,7 +138,7 @@ func Get[T any](kn Knob[T]) T {
 		return s.current.(T)
 	}
 	if s.initialize != nil {
-		s.initialize(s)
+		s.once.Do(func() { s.initialize(s) })
 	}
 	if s.parent > 0 {
 		return Get(Knob[T](s.parent))

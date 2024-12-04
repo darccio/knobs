@@ -1,7 +1,6 @@
 package knobs
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,12 +19,14 @@ func TestRegister(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
+	e := EnvResolver{
+		Key: "TEST_KNOB_INIT",
+	}
 	def := &Definition[string]{
 		Default: "default",
-		EnvVars: []string{"TEST_KNOB_INIT"},
 	}
-
 	t.Run("no env var", func(t *testing.T) {
+		def.EnvVars = []EnvResolver{e}
 		knob := Register(def)
 
 		value := Get(knob)
@@ -34,27 +35,41 @@ func TestInitialize(t *testing.T) {
 
 	t.Run("env var", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "env value")
+		def.EnvVars = []EnvResolver{e}
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "env value", value)
 	})
-}
+	t.Run("multi env var", func(t *testing.T) {
+		t.Setenv("TEST_KNOB_INIT", "env value")
+		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
+		def.EnvVars = []EnvResolver{EnvResolver{Key: "DOES_NOT_EXIST"}, e, EnvResolver{Key: "TEST_KNOB_INIT_2"}}
+		knob := Register(def)
 
-func TestCleanEnvvar(t *testing.T) {
-	t.Setenv("TEST_KNOB_CLEAN", "env value")
+		value := Get(knob)
+		require.Equal(t, "env value", value)
+	})
+	t.Run("remapper", func(t *testing.T) {
+		t.Setenv("TEST_KNOB_INIT", "env value")
 
-	def := &Definition[string]{
-		Default: "default",
-		EnvVars: []string{"TEST_KNOB_CLEAN"},
-		CleanEnvvar: func(v string) string {
-			return fmt.Sprintf("cleaned: %s", v)
-		},
-	}
-	knob := Register(def)
+		e.Remapper = func(val string) string {
+			var valueMap = map[string]string{
+				"env value":   "hello!",
+				"other value": "goodbye!",
+			}
+			if v, ok := valueMap[val]; ok {
+				return v
+			}
+			return ""
+		}
 
-	value := Get(knob)
-	require.Equal(t, "cleaned: env value", value)
+		def.EnvVars = []EnvResolver{e}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, "hello!", value)
+	})
 }
 
 func TestSet(t *testing.T) {
