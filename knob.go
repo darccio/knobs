@@ -45,24 +45,24 @@ func (e *EnvResolver) GetValue() string {
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default any
+	Default T
 	Origins []Origin      // Default and Env origins are implicit
 	EnvVars []EnvResolver // In order of precedence
 }
 
 func (def *Definition[T]) initializer(s *state) {
-	var val string
+	var v string
 	for _, e := range def.EnvVars {
-		val = e.GetValue()
-		if val != "" {
+		v = e.GetValue()
+		if v != "" {
 			break
 		}
 	}
-	if val == "" {
+	if v == "" {
 		s.current = def.Default
 		return
 	}
-	s.current = val
+	s.current = v
 	s.origin = Env
 }
 
