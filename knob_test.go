@@ -19,14 +19,11 @@ func TestRegister(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
-	e := EnvVar[string]{
-		Key: "TEST_KNOB_INIT",
-	}
 	def := &Definition[string]{
 		Default: "default",
 	}
 	t.Run("no env var", func(t *testing.T) {
-		def.EnvVars = []EnvVar[string]{e}
+		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", nil)}
 		knob := Register(def)
 
 		value := Get(knob)
@@ -35,7 +32,7 @@ func TestInitialize(t *testing.T) {
 
 	t.Run("env var", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "env value")
-		def.EnvVars = []EnvVar[string]{e}
+		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", nil)}
 		knob := Register(def)
 
 		value := Get(knob)
@@ -44,7 +41,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("multi env var", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
-		def.EnvVars = []EnvVar[string]{EnvVar[string]{Key: "DOES_NOT_EXIST"}, e, EnvVar[string]{Key: "TEST_KNOB_INIT_2"}}
+		def.EnvVars = []EnvVar[string]{StringEnvVar("DOES_NOT_EXIST", nil), StringEnvVar("TEST_KNOB_INIT", nil), StringEnvVar("TEST_KNOB_INIT_2", nil)}
 		knob := Register(def)
 
 		value := Get(knob)
@@ -53,7 +50,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("Transform", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "env value")
 
-		e.Transform = func(val string) (string, bool) {
+		transform := func(val string) (string, bool) {
 			var valueMap = map[string]string{
 				"env value":   "hello!",
 				"other value": "goodbye!",
@@ -62,7 +59,7 @@ func TestInitialize(t *testing.T) {
 			return v, ok
 		}
 
-		def.EnvVars = []EnvVar[string]{e}
+		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", transform)}
 		knob := Register(def)
 
 		value := Get(knob)
