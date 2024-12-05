@@ -3,7 +3,6 @@ package knobs
 import (
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -27,43 +26,45 @@ type state struct {
 
 type initializer func(*state)
 
-// EnvResolver represents an env var and an optional Remapper for modifying the value set at the env var
-type EnvResolver struct {
-	Key      string
-	Remapper func(v string) string
+// EnvVar represents an env var and an optional Transform for remapping the value set at the env var
+type EnvVar[T any] struct {
+	Key       string
+	Transform func(v string) (T, bool)
 }
 
-// GetValue returns the value stored on the env var of e.Key
-// If e has a Remapper, value is put through the Remapper before getting returned
-func (e *EnvResolver) GetValue() string {
-	if v := strings.TrimSpace(os.Getenv(e.Key)); e.Remapper == nil {
-		return v
-	} else {
-		return e.Remapper(v)
+func (e *EnvVar[T]) getValue() (zero T, ok bool) {
+	v, ok := os.LookupEnv(e.Key)
+	if !ok {
+		return zero, false
 	}
+	if e.Transform != nil {
+		return e.Transform(v)
+	}
+	if _, ok := any(zero).(string); ok {
+		return any(v).(T), true
+	}
+	return zero, false
 }
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
 	Default T
-	Origins []Origin      // Default and Env origins are implicit
-	EnvVars []EnvResolver // In order of precedence
+	Origins []Origin    // Default and Env origins are implicit
+	EnvVars []EnvVar[T] // In order of precedence
 }
 
 func (def *Definition[T]) initializer(s *state) {
-	var v string
+	var v T
+	var ok bool
 	for _, e := range def.EnvVars {
-		v = e.GetValue()
-		if v != "" {
-			break
+		v, ok = e.getValue()
+		if ok {
+			s.origin = Env
+			s.current = v
+			return
 		}
 	}
-	if v == "" {
-		s.current = def.Default
-		return
-	}
-	s.current = v
-	s.origin = Env
+	s.current = def.Default
 }
 
 // Origin defines a known configuration source.
