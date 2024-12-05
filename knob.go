@@ -3,6 +3,7 @@ package knobs
 import (
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -37,6 +38,7 @@ func (e *EnvVar[T]) getValue() (zero T, ok bool) {
 	if !ok {
 		return zero, false
 	}
+	v = strings.TrimSpace(v)
 	if e.Transform != nil {
 		return e.Transform(v)
 	}
