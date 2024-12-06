@@ -1,10 +1,7 @@
 package knobs
 
 import (
-	"os"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -27,107 +24,6 @@ type state struct {
 }
 
 type initializer func(*state)
-
-// EnvVar represents an env var and an optional transform for remapping the value set at the env var
-type EnvVar[T any] struct {
-	key       string
-	transform func(v string) (T, bool)
-}
-
-func StringEnvVar(key string, transform func(v string) (string, bool)) (zero EnvVar[string]) {
-	if key == "" {
-		// TODO: log something? return an error?
-		return zero
-	}
-	return EnvVar[string]{
-		key:       key,
-		transform: transform,
-	}
-}
-
-func IntEnvVar(key string, transform func(v string) (int, bool)) (zero EnvVar[int]) {
-	if key == "" {
-		// TODO: log something? Return an error?
-		return zero
-	}
-	if transform != nil {
-		return EnvVar[int]{
-			key:       key,
-			transform: transform,
-		}
-	}
-	return EnvVar[int]{
-		key: key,
-		transform: func(v string) (int, bool) {
-			if vv, err := strconv.Atoi(v); err == nil {
-				return vv, true
-			} else {
-				return vv, false
-			}
-		},
-	}
-}
-
-func Float64EnvVar(key string, transform func(v string) (float64, bool)) (zero EnvVar[float64]) {
-	if key == "" {
-		// TODO: log something? return an error?
-		return zero
-	}
-	if transform != nil {
-		return EnvVar[float64]{
-			key:       key,
-			transform: transform,
-		}
-	}
-	return EnvVar[float64]{
-		key: key,
-		transform: func(v string) (float64, bool) {
-			if vv, err := strconv.ParseFloat(v, 64); err == nil {
-				return vv, true
-			} else {
-				return vv, false
-			}
-		},
-	}
-}
-
-func BoolEnvVar(key string, transform func(v string) (bool, bool)) (zero EnvVar[bool]) {
-	if key == "" {
-		// TODO: log something? return an error?
-		return zero
-	}
-	if transform != nil {
-		return EnvVar[bool]{
-			key:       key,
-			transform: transform,
-		}
-	}
-	return EnvVar[bool]{
-		key: key,
-		transform: func(v string) (bool, bool) {
-			if vv, err := strconv.ParseBool(v); err == nil {
-				return vv, true
-			} else {
-				return vv, false
-			}
-		},
-	}
-}
-
-func (e *EnvVar[T]) getValue() (zero T, ok bool) {
-	v, ok := os.LookupEnv(e.key)
-	if !ok {
-		return zero, false
-	}
-	v = strings.TrimSpace(v)
-	if e.transform != nil {
-		return e.transform(v)
-	}
-	if _, ok := any(zero).(string); ok {
-		return any(strings.TrimSpace(v)).(T), true
-	}
-	return zero, false
-}
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {

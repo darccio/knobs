@@ -1,6 +1,8 @@
 package knobs
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,51 +21,70 @@ func TestRegister(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
-	def := &Definition[string]{
-		Default: "default",
-	}
-	t.Run("no env var", func(t *testing.T) {
-		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", nil)}
+	t.Run("env unset", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+		}
+		def.EnvVars = []EnvVar[string]{NewEnvVar("TEST_KNOB_INIT", ToString)}
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "default", value)
 	})
 
-	t.Run("env var", func(t *testing.T) {
+	t.Run("env set", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
-		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", nil)}
+		def.EnvVars = []EnvVar[string]{NewEnvVar("TEST_KNOB_INIT", ToString)}
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "env value", value)
 	})
 	t.Run("multi env var", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
-		def.EnvVars = []EnvVar[string]{StringEnvVar("DOES_NOT_EXIST", nil), StringEnvVar("TEST_KNOB_INIT", nil), StringEnvVar("TEST_KNOB_INIT_2", nil)}
+		def.EnvVars = []EnvVar[string]{NewEnvVar("DOES_NOT_EXIST", ToString), NewEnvVar("TEST_KNOB_INIT", ToString), NewEnvVar("TEST_KNOB_INIT_2", ToString)}
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "env value", value)
 	})
-	t.Run("Transform", func(t *testing.T) {
-		t.Setenv("TEST_KNOB_INIT", "env value")
+	t.Run("custom transform", func(t *testing.T) {
+		def := &Definition[float64]{
+			Default: 0.0,
+		}
+		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 
-		transform := func(val string) (string, bool) {
-			var valueMap = map[string]string{
-				"env value":   "hello!",
-				"other value": "goodbye!",
+		transform := func(val string) (zero float64, ok bool) {
+			val = strings.TrimSpace(strings.ToLower(val))
+
+			var samplerMapping = map[string]string{
+				"parentbased_always_on":  "1.0",
+				"parentbased_always_off": "0.0",
 			}
-			v, ok := valueMap[val]
-			return v, ok
+
+			val, ok = samplerMapping[val]
+			if !ok {
+				return zero, ok
+			}
+			v, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return zero, ok
+			}
+			return v, true
 		}
 
-		def.EnvVars = []EnvVar[string]{StringEnvVar("TEST_KNOB_INIT", transform)}
+		def.EnvVars = []EnvVar[float64]{NewEnvVar("TEST_KNOB_INIT", transform)}
 		knob := Register(def)
 
 		value := Get(knob)
-		require.Equal(t, "hello!", value)
+		require.Equal(t, 1.0, value)
 	})
 }
 
@@ -135,8 +156,4 @@ func TestDeleteState(t *testing.T) {
 
 	_, ok = registry[ref]
 	require.False(t, ok)
-}
-
-func TestGetValue(t *testing.T) {
-
 }
