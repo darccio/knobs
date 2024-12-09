@@ -2,6 +2,7 @@ package knobs
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,9 @@ func TestInitialize(t *testing.T) {
 	def := &Definition[string]{
 		Default: "default",
 		EnvVars: []string{"TEST_KNOB_INIT"},
+		Clean: func(v string, _ string /* default value */) (string, bool) {
+			return v, true
+		},
 	}
 
 	t.Run("no env var", func(t *testing.T) {
@@ -47,8 +51,8 @@ func TestCleanEnvvar(t *testing.T) {
 	def := &Definition[string]{
 		Default: "default",
 		EnvVars: []string{"TEST_KNOB_CLEAN"},
-		CleanEnvvar: func(v string) string {
-			return fmt.Sprintf("cleaned: %s", v)
+		Clean: func(v string, _ string /* default value */) (string, bool) {
+			return fmt.Sprintf("cleaned: %s", v), true
 		},
 	}
 	knob := Register(def)
@@ -125,4 +129,17 @@ func TestDeleteState(t *testing.T) {
 
 	_, ok = registry[ref]
 	require.False(t, ok)
+}
+
+func TestIntKnobFromEnv(t *testing.T) {
+	t.Setenv("TEST_KNOB_INT", "42")
+
+	def := &Definition[int]{
+		EnvVars: []string{"TEST_KNOB_INT"},
+		Clean:   func(v string, _ int) (int, bool) { i, _ := strconv.Atoi(v); return i, true },
+	}
+	knob := Register(def)
+
+	value := Get(knob)
+	require.Equal(t, 42, value)
 }

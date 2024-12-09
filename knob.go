@@ -28,10 +28,10 @@ type initializer func(*state)
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default     T
-	Origins     []Origin // Default and Env origins are implicit
-	EnvVars     []string
-	CleanEnvvar func(string) T
+	Default T
+	Origins []Origin // Default and Env origins are implicit
+	EnvVars []string
+	Clean   func(string, T) (T, bool)
 }
 
 func (def *Definition[T]) initializer(s *state) {
@@ -48,11 +48,14 @@ func (def *Definition[T]) initializer(s *state) {
 		return
 	}
 	s.origin = Env
-	if def.CleanEnvvar == nil {
-		s.current = v
+	if def.Clean == nil {
+		panic("knobs: Clean function is required for environment variables")
+	}
+	if final, ok := def.Clean(v, def.Default); ok {
+		s.current = final
 		return
 	}
-	s.current = def.CleanEnvvar(v)
+	s.current = def.Default
 }
 
 // Origin defines a known configuration source.
