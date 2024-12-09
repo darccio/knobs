@@ -2,7 +2,6 @@ package knobs
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,9 +23,7 @@ func TestInitialize(t *testing.T) {
 	def := &Definition[string]{
 		Default: "default",
 		EnvVars: []string{"TEST_KNOB_INIT"},
-		Clean: func(v string, _ string /* default value */) (string, bool) {
-			return v, true
-		},
+		Clean:   ToString,
 	}
 
 	t.Run("no env var", func(t *testing.T) {
@@ -47,18 +44,23 @@ func TestInitialize(t *testing.T) {
 
 func TestCleanEnvvar(t *testing.T) {
 	t.Setenv("TEST_KNOB_CLEAN", "env value")
+	t.Run("custom Clean", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			Clean: func(v string) (string, error) {
+				return fmt.Sprintf("cleaned: %s", v), nil
+			},
+		}
+		knob := Register(def)
 
-	def := &Definition[string]{
-		Default: "default",
-		EnvVars: []string{"TEST_KNOB_CLEAN"},
-		Clean: func(v string, _ string /* default value */) (string, bool) {
-			return fmt.Sprintf("cleaned: %s", v), true
-		},
-	}
-	knob := Register(def)
-
-	value := Get(knob)
-	require.Equal(t, "cleaned: env value", value)
+		value := Get(knob)
+		require.Equal(t, "cleaned: env value", value)
+	})
+	t.Run("transform + CLEAN", func(t *testing.T) {
+		// TODO: once EnvVar custom type changes are merged
+		require.True(t, true)
+	})
 }
 
 func TestSet(t *testing.T) {
@@ -136,7 +138,7 @@ func TestIntKnobFromEnv(t *testing.T) {
 
 	def := &Definition[int]{
 		EnvVars: []string{"TEST_KNOB_INT"},
-		Clean:   func(v string, _ int) (int, bool) { i, _ := strconv.Atoi(v); return i, true },
+		Clean:   ToInt,
 	}
 	knob := Register(def)
 
