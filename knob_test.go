@@ -1,6 +1,7 @@
 package knobs
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -56,6 +57,24 @@ func TestCleanEnvvar(t *testing.T) {
 
 		value := Get(knob)
 		require.Equal(t, "cleaned: env value", value)
+	})
+	t.Run("Clean with error", func(t *testing.T) {
+		defaultVal := "default"
+
+		def := &Definition[string]{
+			Default: defaultVal,
+			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			Clean: func(v string) (string, error) {
+				if v == "does_not_exist" {
+					return "should_not_occur", nil
+				}
+				return "", errors.New("Value not in expected range")
+			},
+		}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, defaultVal, value)
 	})
 	t.Run("transform + CLEAN", func(t *testing.T) {
 		// TODO: once EnvVar custom type changes are merged
