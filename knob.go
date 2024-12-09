@@ -28,15 +28,13 @@ type initializer func(*state)
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
 	Default T
-	Origins []Origin    // Default and Env origins are implicit
-	EnvVars []EnvVar[T] // In order of precedence
+	Origins []Origin // Default and Env origins are implicit
+	EnvVars []EnvVar // In order of precedence
 }
 
 func (def *Definition[T]) initializer(s *state) {
-	var v T
-	var ok bool
 	for _, e := range def.EnvVars {
-		v, ok = e.getValue()
+		v, ok := e.getValue()
 		if ok {
 			s.origin = Env
 			s.current = v
