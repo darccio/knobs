@@ -1,9 +1,7 @@
 package knobs
 
 import (
-	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -17,6 +15,7 @@ var (
 
 type state struct {
 	sync.RWMutex
+	once       sync.Once
 	current    any
 	initialize initializer
 	origins    map[Origin]struct{}
@@ -30,16 +29,14 @@ type initializer func(*state)
 type Definition[T any] struct {
 	Default     T
 	Origins     []Origin // Default and Env origins are implicit
-	EnvVars     []string
+	EnvVars     []EnvVar // In order of precedence
 	CleanEnvvar func(string) T
 }
 
 func (def *Definition[T]) initializer(s *state) {
 	var v string
-	for _, envVar := range def.EnvVars {
-		v = os.Getenv(envVar)
-		v = strings.TrimSpace(v)
-		if v != "" {
+	for _, e := range def.EnvVars {
+		if v = e.getValue(); v != "" {
 			break
 		}
 	}
@@ -130,7 +127,7 @@ func Get[T any](kn Knob[T]) T {
 		return s.current.(T)
 	}
 	if s.initialize != nil {
-		s.initialize(s)
+		s.once.Do(func() { s.initialize(s) })
 	}
 	if s.parent > 0 {
 		return Get(Knob[T](s.parent))
