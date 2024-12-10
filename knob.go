@@ -1,7 +1,7 @@
 package knobs
 
 import (
-	"fmt"
+	"log"
 	"runtime"
 	"strconv"
 	"sync"
@@ -73,7 +73,7 @@ func (def *Definition[T]) initializer(s *state) {
 		s.current = final
 		return
 	} else {
-		fmt.Printf("Error cleaning variable: %v\n", err)
+		log.Printf("Error cleaning variable: %v\n", err)
 	}
 }
 
