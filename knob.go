@@ -1,6 +1,7 @@
 package knobs
 
 import (
+	"errors"
 	"log"
 	"runtime"
 	"strconv"
@@ -14,6 +15,12 @@ var (
 	registry map[int]*state
 	regMux   sync.RWMutex
 	regOnce  sync.Once // Ensures the registry is created only once
+)
+
+var (
+	// ErrInvalidValue is returned when the value cannot be converted to the expected type.
+	// This error is useful when the Clean function fails to convert the value.
+	ErrInvalidValue = errors.New("invalid value")
 )
 
 type state struct {
