@@ -3,6 +3,7 @@ package knobs
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ func TestInitialize(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
 			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
-			Clean: ToString,
+			Clean:   ToString,
 		}
 		knob := Register(def)
 
@@ -37,9 +38,7 @@ func TestInitialize(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
 			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
-			Clean: func(v string, _ string /* default value */) (string, bool) {
-				return v, true
-			},
+			Clean:   ToString,
 		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		knob := Register(def)
@@ -50,9 +49,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("multi env var", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			Clean: func(v string, _ string /* default value */) (string, bool) {
-				return v, true
-			},
+			Clean:   ToString,
 		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
@@ -65,9 +62,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("with envvar transform", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "0.0",
-			Clean: func(v string, _ string /* default value */) (string, bool) {
-				return v, true
-			},
+			Clean:   ToString,
 		}
 		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 
@@ -98,7 +93,7 @@ func TestCleanEnvvar(t *testing.T) {
 	t.Run("custom Clean", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
 			Clean: func(v string) (string, error) {
 				return fmt.Sprintf("cleaned: %s", v), nil
 			},
@@ -113,7 +108,7 @@ func TestCleanEnvvar(t *testing.T) {
 
 		def := &Definition[string]{
 			Default: defaultVal,
-			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
 			Clean: func(v string) (string, error) {
 				if v == "does_not_exist" {
 					return "should_not_occur", nil
