@@ -8,11 +8,12 @@ import (
 	"sync/atomic"
 )
 
+// Global variables
 var (
 	counter  atomic.Int32
 	registry map[int]*state
 	regMux   sync.RWMutex
-	regOnce  sync.Once
+	regOnce  sync.Once // Ensures the registry is created only once
 )
 
 type state struct {
