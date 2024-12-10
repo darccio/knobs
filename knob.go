@@ -183,7 +183,7 @@ func deleteState(kn int) {
 	regMux.Unlock()
 }
 
-func Set[T any](kn Knob[T], value T, origin Origin) {
+func Set[T any](kn Knob[T], origin Origin, value T) {
 	k := int(kn)
 	s := getState(k)
 	if s == nil {

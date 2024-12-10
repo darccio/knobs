@@ -27,7 +27,7 @@ func ExampleDerive() {
 	knob := knobs.Register(def)
 	// 2. Define a derived configuration knob that overrides the parent
 	derived := knobs.Derive(knob)
-	knobs.Set(derived, "overridden", knobs.Code)
+	knobs.Set(derived, knobs.Code, "overridden")
 	// 3. Retrieve the value, resolved on first access
 	value := knobs.Get(derived)
 	fmt.Println(value)

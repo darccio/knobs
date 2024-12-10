@@ -136,15 +136,15 @@ func TestSet(t *testing.T) {
 	knob := Register(def)
 
 	t.Run("set by known origin", func(t *testing.T) {
-		Set(knob, "new value", Code)
+		Set(knob, Code, "new value")
 
 		value := Get(knob)
 		require.Equal(t, "new value", value)
 	})
 
 	t.Run("not set an unknown origin", func(t *testing.T) {
-		Set(knob, "known value", Code)
-		Set(knob, "this shouldn't be", Env) // this fails silently
+		Set(knob, Code, "known value")
+		Set(knob, Env, "this shouldn't be") // this fails silently
 
 		value := Get(knob)
 		require.Equal(t, "known value", value)
@@ -166,14 +166,14 @@ func TestDerive(t *testing.T) {
 	})
 
 	t.Run("parent set value", func(t *testing.T) {
-		Set(parent, "parent value", Code)
+		Set(parent, Code, "parent value")
 
 		value := Get(knob)
 		require.Equal(t, "parent value", value)
 	})
 
 	t.Run("knob set value", func(t *testing.T) {
-		Set(knob, "knob value", Code)
+		Set(knob, Code, "knob value")
 
 		value := Get(knob)
 		require.Equal(t, "knob value", value)
