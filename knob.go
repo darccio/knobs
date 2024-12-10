@@ -56,8 +56,11 @@ type Definition[T any] struct {
 
 func (def *Definition[T]) initializer(s *state) {
 	s.current = def.Default
-	var v string
-	for _, e := range def.EnvVars {
+	var (
+		v string
+		e EnvVar
+	)
+	for _, e = range def.EnvVars {
 		if v = e.getValue(); v != "" {
 			break
 		}
@@ -67,13 +70,13 @@ func (def *Definition[T]) initializer(s *state) {
 	}
 	s.origin = Env
 	if def.Clean == nil {
-		panic("knobs: Clean function is required for environment variables")
+		log.Printf("knobs: clean function is missing for variable %q", e.key)
 	}
 	if final, err := def.Clean(v); err == nil {
 		s.current = final
 		return
 	} else {
-		log.Printf("Error cleaning variable: %v\n", err)
+		log.Printf("knobs: error cleaning variable's value %q (%q): %v", e.key, v, err)
 	}
 }
 
