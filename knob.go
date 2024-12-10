@@ -56,10 +56,11 @@ var (
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default T
-	Origins []Origin // Default and Env origins are implicit
-	EnvVars []EnvVar
-	Parse   func(string) (T, error)
+	Default  T
+	Origins  []Origin // Default and Env origins are implicit
+	EnvVars  []EnvVar
+	Requires []any // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
+	Parse    func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
