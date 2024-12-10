@@ -46,6 +46,7 @@ func TestInitialize(t *testing.T) {
 		value := Get(knob)
 		require.Equal(t, "env value", value)
 	})
+
 	t.Run("multi env var", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
@@ -59,6 +60,7 @@ func TestInitialize(t *testing.T) {
 		value := Get(knob)
 		require.Equal(t, "env value", value)
 	})
+
 	t.Run("with envvar transform", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "0.0",
@@ -90,6 +92,7 @@ func TestInitialize(t *testing.T) {
 
 func TestCleanEnvvar(t *testing.T) {
 	t.Setenv("TEST_KNOB_CLEAN", "env value")
+
 	t.Run("custom Clean", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
@@ -103,7 +106,8 @@ func TestCleanEnvvar(t *testing.T) {
 		value := Get(knob)
 		require.Equal(t, "cleaned: env value", value)
 	})
-	t.Run("Clean with error", func(t *testing.T) {
+
+	t.Run("clean with error", func(t *testing.T) {
 		defaultVal := "default"
 
 		def := &Definition[string]{
@@ -121,6 +125,7 @@ func TestCleanEnvvar(t *testing.T) {
 		value := Get(knob)
 		require.Equal(t, defaultVal, value)
 	})
+
 	t.Run("transform + CLEAN", func(t *testing.T) {
 		// TODO: once EnvVar custom type changes are merged
 		require.True(t, true)

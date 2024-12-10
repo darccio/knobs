@@ -12,12 +12,14 @@ func TestEnvVar(t *testing.T) {
 		v := e.getValue()
 		assert.Equal(t, "", v)
 	})
+
 	t.Run("env set - no transform", func(t *testing.T) {
 		t.Setenv("MY_ENV", "something")
 		e := EnvVar{Key: "MY_ENV"}
 		v := e.getValue()
 		assert.Equal(t, "something", v)
 	})
+
 	t.Run("env set - with transform", func(t *testing.T) {
 		t.Setenv("MY_ENV", "something")
 		e := EnvVar{Key: "MY_ENV", Transform: func(s string) string { return "something-else" }}
