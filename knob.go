@@ -2,10 +2,8 @@ package knobs
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -57,6 +55,7 @@ type Definition[T any] struct {
 }
 
 func (def *Definition[T]) initializer(s *state) {
+	s.current = def.Default
 	var v string
 	for _, e := range def.EnvVars {
 		if v = e.getValue(); v != "" {
@@ -64,7 +63,6 @@ func (def *Definition[T]) initializer(s *state) {
 		}
 	}
 	if v == "" {
-		s.current = def.Default
 		return
 	}
 	s.origin = Env
@@ -77,7 +75,6 @@ func (def *Definition[T]) initializer(s *state) {
 	} else {
 		fmt.Printf("Error cleaning variable: %v\n", err)
 	}
-	s.current = def.Default
 }
 
 // Origin defines a known configuration source.
