@@ -25,7 +25,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("env unset", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}},
 			Clean:   ToString,
 		}
 		knob := Register(def)
@@ -37,7 +37,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("env set", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}},
 			Clean:   ToString,
 		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
@@ -53,7 +53,7 @@ func TestInitialize(t *testing.T) {
 		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
-		def.EnvVars = []EnvVar{{key: "DOES_NOT_EXIST"}, {key: "TEST_KNOB_INIT"}, {key: "TEST_KNOB_INIT_2"}}
+		def.EnvVars = []EnvVar{{Key: "DOES_NOT_EXIST"}, {Key: "TEST_KNOB_INIT"}, {Key: "TEST_KNOB_INIT_2"}}
 		knob := Register(def)
 
 		value := Get(knob)
@@ -93,7 +93,7 @@ func TestCleanEnvvar(t *testing.T) {
 	t.Run("custom Clean", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_CLEAN"}},
 			Clean: func(v string) (string, error) {
 				return fmt.Sprintf("cleaned: %s", v), nil
 			},
@@ -108,7 +108,7 @@ func TestCleanEnvvar(t *testing.T) {
 
 		def := &Definition[string]{
 			Default: defaultVal,
-			EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_CLEAN"}},
 			Clean: func(v string) (string, error) {
 				if v == "does_not_exist" {
 					return "should_not_occur", nil
@@ -201,7 +201,7 @@ func TestIntKnobFromEnv(t *testing.T) {
 	t.Setenv("TEST_KNOB_INT", "42")
 
 	def := &Definition[int]{
-		EnvVars: []EnvVar{{key: "TEST_KNOB_INT"}},
+		EnvVars: []EnvVar{{Key: "TEST_KNOB_INT"}},
 		Clean:   ToInt,
 	}
 	knob := Register(def)

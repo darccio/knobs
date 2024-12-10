@@ -78,13 +78,13 @@ func (def *Definition[T]) initializer(s *state) {
 	}
 	s.origin = Env
 	if def.Clean == nil {
-		log.Printf("knobs: clean function is missing for variable %q", e.key)
+		log.Printf("knobs: clean function is missing for variable %q", e.Key)
 	}
 	if final, err := def.Clean(v); err == nil {
 		s.current = final
 		return
 	} else {
-		log.Printf("knobs: error cleaning variable's value %q (%q): %v", e.key, v, err)
+		log.Printf("knobs: error cleaning variable's value %q (%q): %v", e.Key, v, err)
 	}
 }
 
