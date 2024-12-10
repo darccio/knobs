@@ -21,25 +21,75 @@ func TestRegister(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
-	def := &Definition[string]{
-		Default: "default",
-		EnvVars: []string{"TEST_KNOB_INIT"},
-		Clean:   ToString,
-	}
-
-	t.Run("no env var", func(t *testing.T) {
+	t.Run("env unset", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
+			Clean: ToString,
+		}
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "default", value)
 	})
 
-	t.Run("env var", func(t *testing.T) {
+	t.Run("env set", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
+			Clean: func(v string, _ string /* default value */) (string, bool) {
+				return v, true
+			},
+		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		knob := Register(def)
 
 		value := Get(knob)
 		require.Equal(t, "env value", value)
+	})
+	t.Run("multi env var", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+			Clean: func(v string, _ string /* default value */) (string, bool) {
+				return v, true
+			},
+		}
+		t.Setenv("TEST_KNOB_INIT", "env value")
+		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
+		def.EnvVars = []EnvVar{{key: "DOES_NOT_EXIST"}, {key: "TEST_KNOB_INIT"}, {key: "TEST_KNOB_INIT_2"}}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, "env value", value)
+	})
+	t.Run("with envvar transform", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "0.0",
+			Clean: func(v string, _ string /* default value */) (string, bool) {
+				return v, true
+			},
+		}
+		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
+
+		transform := func(val string) string {
+			val = strings.TrimSpace(strings.ToLower(val))
+
+			var samplerMapping = map[string]string{
+				"parentbased_always_on":  "1.0",
+				"parentbased_always_off": "0.0",
+			}
+
+			if val, ok := samplerMapping[val]; ok {
+				return val
+			} else {
+				return ""
+			}
+		}
+		def.EnvVars = []EnvVar{{"TEST_KNOB_INIT", transform}}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, "1.0", value)
 	})
 }
 
@@ -156,7 +206,7 @@ func TestIntKnobFromEnv(t *testing.T) {
 	t.Setenv("TEST_KNOB_INT", "42")
 
 	def := &Definition[int]{
-		EnvVars: []string{"TEST_KNOB_INT"},
+		EnvVars: []EnvVar{{key: "TEST_KNOB_INT"}},
 		Clean:   ToInt,
 	}
 	knob := Register(def)

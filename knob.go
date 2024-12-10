@@ -52,16 +52,14 @@ var (
 type Definition[T any] struct {
 	Default T
 	Origins []Origin // Default and Env origins are implicit
-	EnvVars []string
+	EnvVars []EnvVar
 	Clean   func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
 	var v string
-	for _, envVar := range def.EnvVars {
-		v = os.Getenv(envVar)
-		v = strings.TrimSpace(v)
-		if v != "" {
+	for _, e := range def.EnvVars {
+		if v = e.getValue(); v != "" {
 			break
 		}
 	}
