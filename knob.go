@@ -59,7 +59,7 @@ type Definition[T any] struct {
 	Default T
 	Origins []Origin // Default and Env origins are implicit
 	EnvVars []EnvVar
-	Clean   func(string) (T, error)
+	Parse   func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
@@ -77,10 +77,11 @@ func (def *Definition[T]) initializer(s *state) {
 		return
 	}
 	s.origin = Env
-	if def.Clean == nil {
-		log.Printf("knobs: clean function is missing for variable %q", e.Key)
+	if def.Parse == nil {
+		log.Printf("knobs: missing Parse function for environment variable %q", e.Key)
+		return
 	}
-	if final, err := def.Clean(v); err == nil {
+	if final, err := def.Parse(v); err == nil {
 		s.current = final
 		return
 	} else {

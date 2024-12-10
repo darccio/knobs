@@ -1,7 +1,6 @@
 package knobs
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,7 +25,7 @@ func TestInitialize(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
 			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}},
-			Clean:   ToString,
+			Parse:   ToString,
 		}
 		knob := Register(def)
 
@@ -38,7 +37,7 @@ func TestInitialize(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
 			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}},
-			Clean:   ToString,
+			Parse:   ToString,
 		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		knob := Register(def)
@@ -48,13 +47,15 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("multi env var", func(t *testing.T) {
-		def := &Definition[string]{
-			Default: "default",
-			Clean:   ToString,
-		}
 		t.Setenv("TEST_KNOB_INIT", "env value")
 		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
-		def.EnvVars = []EnvVar{{Key: "DOES_NOT_EXIST"}, {Key: "TEST_KNOB_INIT"}, {Key: "TEST_KNOB_INIT_2"}}
+
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}, {Key: "TEST_KNOB_INIT_2"}},
+			Parse:   ToString,
+		}
+
 		knob := Register(def)
 
 		value := Get(knob)
@@ -62,10 +63,6 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("with envvar transform", func(t *testing.T) {
-		def := &Definition[string]{
-			Default: "0.0",
-			Clean:   ToString,
-		}
 		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 
 		transform := func(val string) string {
@@ -82,7 +79,12 @@ func TestInitialize(t *testing.T) {
 				return ""
 			}
 		}
-		def.EnvVars = []EnvVar{{"TEST_KNOB_INIT", transform}}
+		def := &Definition[string]{
+			Default: "0.0",
+			EnvVars: []EnvVar{{"TEST_KNOB_INIT", transform}},
+			Parse:   ToString,
+		}
+
 		knob := Register(def)
 
 		value := Get(knob)
@@ -90,14 +92,14 @@ func TestInitialize(t *testing.T) {
 	})
 }
 
-func TestCleanEnvvar(t *testing.T) {
-	t.Setenv("TEST_KNOB_CLEAN", "env value")
+func TestParse(t *testing.T) {
+	t.Setenv("TEST_KNOB_PARSE", "env value")
 
-	t.Run("custom Clean", func(t *testing.T) {
+	t.Run("custom parser", func(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
-			EnvVars: []EnvVar{{Key: "TEST_KNOB_CLEAN"}},
-			Clean: func(v string) (string, error) {
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_PARSE"}},
+			Parse: func(v string) (string, error) {
 				return fmt.Sprintf("cleaned: %s", v), nil
 			},
 		}
@@ -107,17 +109,17 @@ func TestCleanEnvvar(t *testing.T) {
 		require.Equal(t, "cleaned: env value", value)
 	})
 
-	t.Run("clean with error", func(t *testing.T) {
+	t.Run("parse with error", func(t *testing.T) {
 		defaultVal := "default"
 
 		def := &Definition[string]{
 			Default: defaultVal,
-			EnvVars: []EnvVar{{Key: "TEST_KNOB_CLEAN"}},
-			Clean: func(v string) (string, error) {
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_PARSE"}},
+			Parse: func(v string) (string, error) {
 				if v == "does_not_exist" {
 					return "should_not_occur", nil
 				}
-				return "", errors.New("Value not in expected range")
+				return "", ErrInvalidValue
 			},
 		}
 		knob := Register(def)
@@ -137,6 +139,7 @@ func TestSet(t *testing.T) {
 
 	def := &Definition[string]{
 		Default: "default",
+		Parse:   ToString,
 	}
 	knob := Register(def)
 
@@ -161,6 +164,7 @@ func TestDerive(t *testing.T) {
 
 	def := &Definition[string]{
 		Default: "default",
+		Parse:   ToString,
 	}
 	parent := Register(def)
 	knob := Derive(parent)
@@ -207,7 +211,7 @@ func TestIntKnobFromEnv(t *testing.T) {
 
 	def := &Definition[int]{
 		EnvVars: []EnvVar{{Key: "TEST_KNOB_INT"}},
-		Clean:   ToInt,
+		Parse:   ToInt,
 	}
 	knob := Register(def)
 
