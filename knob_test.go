@@ -1,6 +1,7 @@
 package knobs
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -60,7 +61,7 @@ func TestInitialize(t *testing.T) {
 		}
 		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 
-		transform := func(val string) (string, bool) {
+		transform := func(val string) string {
 			val = strings.TrimSpace(strings.ToLower(val))
 
 			var samplerMapping = map[string]string{
@@ -69,9 +70,9 @@ func TestInitialize(t *testing.T) {
 			}
 
 			if val, ok := samplerMapping[val]; ok {
-				return val, ok
+				return val
 			} else {
-				return "", false
+				return ""
 			}
 		}
 		def.EnvVars = []EnvVar{{"TEST_KNOB_INIT", transform}}
@@ -80,6 +81,20 @@ func TestInitialize(t *testing.T) {
 		value := Get(knob)
 		require.Equal(t, "1.0", value)
 	})
+}
+
+func TestCleanEnvvar(t *testing.T) {
+	t.Setenv("TEST_KNOB_CLEAN", "env value")
+	def := &Definition[string]{
+		Default: "default",
+		EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
+		CleanEnvvar: func(v string) string {
+			return fmt.Sprintf("cleaned: %s", v)
+		},
+	}
+	knob := Register(def)
+	value := Get(knob)
+	require.Equal(t, "cleaned: env value", value)
 }
 
 func TestSet(t *testing.T) {
