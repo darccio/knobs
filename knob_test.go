@@ -1,9 +1,8 @@
 package knobs
 
 import (
+	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,9 +25,7 @@ func TestInitialize(t *testing.T) {
 		def := &Definition[string]{
 			Default: "default",
 			EnvVars: []EnvVar{{key: "TEST_KNOB_INIT"}},
-			Clean: func(v string, _ string /* default value */) (string, bool) {
-				return v, true
-			},
+			Clean: ToString,
 		}
 		knob := Register(def)
 
@@ -98,16 +95,41 @@ func TestInitialize(t *testing.T) {
 
 func TestCleanEnvvar(t *testing.T) {
 	t.Setenv("TEST_KNOB_CLEAN", "env value")
-	def := &Definition[string]{
-		Default: "default",
-		EnvVars: []EnvVar{{key: "TEST_KNOB_CLEAN"}},
-		Clean: func(v string, _ string /* default value */) (string, bool) {
-			return fmt.Sprintf("cleaned: %s", v), true
-		},
-	}
-	knob := Register(def)
-	value := Get(knob)
-	require.Equal(t, "cleaned: env value", value)
+	t.Run("custom Clean", func(t *testing.T) {
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			Clean: func(v string) (string, error) {
+				return fmt.Sprintf("cleaned: %s", v), nil
+			},
+		}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, "cleaned: env value", value)
+	})
+	t.Run("Clean with error", func(t *testing.T) {
+		defaultVal := "default"
+
+		def := &Definition[string]{
+			Default: defaultVal,
+			EnvVars: []string{"TEST_KNOB_CLEAN"},
+			Clean: func(v string) (string, error) {
+				if v == "does_not_exist" {
+					return "should_not_occur", nil
+				}
+				return "", errors.New("Value not in expected range")
+			},
+		}
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, defaultVal, value)
+	})
+	t.Run("transform + CLEAN", func(t *testing.T) {
+		// TODO: once EnvVar custom type changes are merged
+		require.True(t, true)
+	})
 }
 
 func TestSet(t *testing.T) {
@@ -185,7 +207,7 @@ func TestIntKnobFromEnv(t *testing.T) {
 
 	def := &Definition[int]{
 		EnvVars: []EnvVar{{key: "TEST_KNOB_INT"}},
-		Clean:   func(v string, _ int) (int, bool) { i, _ := strconv.Atoi(v); return i, true },
+		Clean:   ToInt,
 	}
 	knob := Register(def)
 

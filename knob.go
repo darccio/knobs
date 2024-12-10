@@ -1,7 +1,11 @@
 package knobs
 
 import (
+	"fmt"
+	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -25,12 +29,31 @@ type state struct {
 
 type initializer func(*state)
 
+// The following variables are transform functions for converting string values to other basic data types
+// Their purpose is to make creating non-string EnvVars easier and cleaner, e.g. NewEnvVar("MY_VAR", ToInt)
+var (
+	ToInt = func(s string) (int, error) {
+		// TODO: Determine whether we want to accept floats into ints with this function; currently fails on input like "1.0"
+		return strconv.Atoi(s)
+	}
+	ToFloat64 = func(s string) (float64, error) {
+		return strconv.ParseFloat(s, 64)
+	}
+	ToBool = func(s string) (bool, error) {
+		return strconv.ParseBool(s)
+	}
+	// ToString is mainly for documentation purposes
+	ToString = func(s string) (string, error) {
+		return s, nil
+	}
+)
+
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
 	Default T
 	Origins []Origin // Default and Env origins are implicit
 	EnvVars []EnvVar
-	Clean   func(string, T) (T, bool)
+	Clean   func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
@@ -48,9 +71,11 @@ func (def *Definition[T]) initializer(s *state) {
 	if def.Clean == nil {
 		panic("knobs: Clean function is required for environment variables")
 	}
-	if final, ok := def.Clean(v, def.Default); ok {
+	if final, err := def.Clean(v); err == nil {
 		s.current = final
 		return
+	} else {
+		fmt.Printf("Error cleaning variable: %v\n", err)
 	}
 	s.current = def.Default
 }
