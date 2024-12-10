@@ -29,7 +29,7 @@ type initializer func(*state)
 type Definition[T any] struct {
 	Default T
 	Origins []Origin // Default and Env origins are implicit
-	EnvVars []string
+	EnvVars []EnvVar
 	Clean   func(string, T) (T, bool)
 }
 
