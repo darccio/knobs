@@ -55,6 +55,12 @@ func (sc *Scope) delete(kn int) {
 	delete(sc.states, kn)
 }
 
+func NewScope() *Scope {
+	return &Scope{
+		states: make(map[int]*state),
+	}
+}
+
 func DefaultScope() *Scope {
 	defMux.Lock()
 	defer defMux.Unlock()
@@ -62,9 +68,7 @@ func DefaultScope() *Scope {
 	if defScope != nil {
 		return defScope
 	}
-	defScope = &Scope{
-		states: make(map[int]*state),
-	}
+	defScope = NewScope()
 	return defScope
 }
 
