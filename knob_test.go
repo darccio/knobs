@@ -189,20 +189,23 @@ func TestDerive(t *testing.T) {
 	})
 }
 
-func TestDeleteState(t *testing.T) {
+func TestScopeDelete(t *testing.T) {
 	t.Parallel()
 
 	knob := Register(&Definition[string]{
 		Default: "default",
 	})
+	Set(knob, Code, "new value")
 
 	ref := int(knob)
-	_, ok := registry[ref]
+	scope := DefaultScope()
+
+	_, ok := scope.states[ref]
 	require.True(t, ok)
 
-	deleteState(ref)
+	scope.delete(ref)
 
-	_, ok = registry[ref]
+	_, ok = scope.states[ref]
 	require.False(t, ok)
 }
 
