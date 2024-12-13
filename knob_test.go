@@ -2,11 +2,19 @@ package knobs
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	// Disable logging in tests
+	SetLogger(func(string, ...interface{}) {})
+
+	os.Exit(m.Run())
+}
 
 func TestRegister(t *testing.T) {
 	t.Parallel()
@@ -65,7 +73,7 @@ func TestInitialize(t *testing.T) {
 	t.Run("with envvar transform", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 
-		transform := func(val string) string {
+		transform := func(val string) (string, error) {
 			val = strings.TrimSpace(strings.ToLower(val))
 
 			var samplerMapping = map[string]string{
@@ -74,9 +82,9 @@ func TestInitialize(t *testing.T) {
 			}
 
 			if val, ok := samplerMapping[val]; ok {
-				return val
+				return val, nil
 			} else {
-				return ""
+				return "", nil
 			}
 		}
 		def := &Definition[string]{

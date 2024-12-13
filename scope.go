@@ -1,11 +1,12 @@
 package knobs
 
-import "sync"
+import (
+	"sync"
+)
 
 var (
 	defMux   sync.Mutex
 	defScope *Scope
-	defOnce  sync.Once
 )
 
 type Scope struct {

@@ -2,7 +2,6 @@ package knobs
 
 import (
 	"errors"
-	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -19,7 +18,7 @@ var (
 var (
 	// ErrInvalidValue is returned when the value cannot be converted to the expected type.
 	// This error is useful when the Clean function fails to convert the value.
-	ErrInvalidValue = errors.New("invalid value")
+	ErrInvalidValue = errors.New("knobs: invalid value")
 )
 
 // definition is an internal representation of a configuration definition. See Definition.
@@ -94,14 +93,14 @@ func (def *Definition[T]) initializer(s *state) {
 	}
 	s.origin = Env
 	if def.Parse == nil {
-		log.Printf("knobs: missing Parse function for environment variable %q", e.Key)
+		logFn("knobs: missing Parse function for environment variable %q", e.Key)
 		return
 	}
 	if final, err := def.Parse(v); err == nil {
 		s.current = final
 		return
 	} else {
-		log.Printf("knobs: error cleaning variable's value %q (%q): %v", e.Key, v, err)
+		logFn("%s", err.Error())
 	}
 }
 
