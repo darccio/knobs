@@ -2,8 +2,6 @@ package knobs
 
 import (
 	"errors"
-	"log"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -12,25 +10,41 @@ import (
 // Global variables
 var (
 	counter  atomic.Int32
-	registry map[int]*state
 	regMux   sync.RWMutex
+	registry map[int]*definition
 	regOnce  sync.Once // Ensures the registry is created only once
 )
 
 var (
 	// ErrInvalidValue is returned when the value cannot be converted to the expected type.
-	// This error is useful when the Clean function fails to convert the value.
+	// This error is useful when the Parse function fails to convert the value.
 	ErrInvalidValue = errors.New("invalid value")
 )
 
+// definition is an internal representation of a configuration definition. See Definition.
+type definition struct {
+	def     any
+	init    initializer
+	origins map[Origin]struct{}
+}
+
+// state is an instance of a configuration definition.
 type state struct {
 	sync.RWMutex
-	once       sync.Once
-	current    any
-	initialize initializer
-	origins    map[Origin]struct{}
-	origin     Origin // Last origin
-	parent     int
+	*definition
+
+	once    sync.Once
+	current any
+	origin  Origin // Last origin
+	parent  int
+}
+
+func (s *state) init() {
+	if s.definition == nil {
+		// Knob is a derived knob and has no definition.
+		return
+	}
+	s.once.Do(func() { s.definition.init(s) })
 }
 
 type initializer func(*state)
@@ -56,35 +70,55 @@ var (
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default T
-	Origins []Origin // Default and Env origins are implicit
-	EnvVars []EnvVar
-	Clean   func(string) (T, error)
+	Default  T
+	Origins  []Origin // Default and Env origins are implicit
+	EnvVars  []EnvVar
+	Requires []any                                                            // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
+	Resolve  func(environ map[string]string, decision string) (string, error) // Resolve handles validation and conditional behavior
+	Parse    func(string) (T, error)                                          // Parse converts a string to the expected type; ignores the returned value if an error is returned
 }
 
 func (def *Definition[T]) initializer(s *state) {
 	s.current = def.Default
+	if len(def.EnvVars) == 0 {
+		return
+	}
 	var (
-		v string
-		e EnvVar
+		current = ""
+		environ = make(map[string]string, len(def.EnvVars))
 	)
-	for _, e = range def.EnvVars {
-		if v = e.getValue(); v != "" {
-			break
+	for _, e := range def.EnvVars {
+		v := e.getValue()
+		if v == "" {
+			continue
+		}
+		environ[e.Key] = v
+		if len(environ) == 1 {
+			current = e.Key
 		}
 	}
-	if v == "" {
+	if current == "" {
 		return
 	}
 	s.origin = Env
-	if def.Clean == nil {
-		log.Printf("knobs: clean function is missing for variable %q", e.Key)
+	if def.Resolve != nil {
+		// Our current value found isn't definitive yet
+		key, err := def.Resolve(environ, current)
+		if err != nil {
+			logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+			return
+		}
+		current = key
 	}
-	if final, err := def.Clean(v); err == nil {
+	if def.Parse == nil {
+		logFn("missing Parse function for environment variable %q", current)
+		return
+	}
+	if final, err := def.Parse(environ[current]); err == nil {
 		s.current = final
 		return
 	} else {
-		log.Printf("knobs: error cleaning variable's value %q (%q): %v", e.Key, v, err)
+		logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
 	}
 }
 
@@ -105,9 +139,9 @@ const (
 // Knob defines an available configuration.
 type Knob[T any] int
 
-// Register adds a new configuration to the registry.
-// It returns a Knob that can be used to retrieve the configuration value.
-// It's not idempotent, so calling it multiple times with the same Definition will create multiple Knobs.
+// Register adds a new configuration to the default scope.
+// Register returns a Knob that can be used to retrieve the configuration value. A Knob can be used in multiple scopes.
+// Register is not idempotent, so calling it multiple times with the same Definition will create multiple Knobs.
 func Register[T any](def *Definition[T]) Knob[T] {
 	var (
 		k       = int(counter.Add(1))
@@ -116,44 +150,57 @@ func Register[T any](def *Definition[T]) Knob[T] {
 	for _, o := range def.Origins {
 		origins[o] = struct{}{}
 	}
-	regOnce.Do(func() {
-		registry = make(map[int]*state)
-	})
-	s := &state{
-		initialize: def.initializer,
-		origins:    origins,
+	d := &definition{
+		def:     def.Default,
+		init:    def.initializer,
+		origins: origins,
 	}
-	setState(k, s)
-	knob := Knob[T](k)
-	runtime.SetFinalizer(&knob, func(k *Knob[T]) {
-		// This keeps the registry clean.
-		deleteState(int(*k))
+	regMux.Lock()
+	defer regMux.Unlock()
+
+	regOnce.Do(func() {
+		registry = make(map[int]*definition)
 	})
-	return knob
+
+	registry[k] = d
+	return Knob[T](k)
 }
 
-// Derive creates a new configuration based on a parent knob.
+// Derive creates a new configuration based on a parent Knob from the default scope.
 // Derive returns a Knob initialized with the parent value, which can either be kept or overwritten with a new value.
-// The parent knob can be another derived knob.
-// It's not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
+// The parent Knob can be another derived Knob.
+// Derive is not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
 func Derive[T any](parent Knob[T]) Knob[T] {
+	return DeriveScope(DefaultScope(), parent)
+}
+
+// DeriveScope creates a new configuration based on a parent Knob from a specific scope.
+// DeriveScope returns a Knob initialized with the parent value, which can either be kept or overwritten with a new value.
+// The parent Knob can be another derived Knob.
+// DeriveScope is not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
+func DeriveScope[T any](sc *Scope, parent Knob[T]) Knob[T] {
 	dk := int(counter.Add(1))
 	s := &state{
+		// Derived Knobs fall back to their parent's value if they don't have their own.
 		parent: int(parent),
 	}
-	setState(dk, s)
+	sc.set(dk, s)
 	return Knob[T](dk)
 }
 
-// Get retrieves the current configuration value.
+// Get retrieves the current configuration value from the default scope.
 func Get[T any](kn Knob[T]) T {
-	var (
-		zero T
-		s    = getState(int(kn))
-	)
+	return GetScope(DefaultScope(), kn)
+}
+
+// GetScope retrieves the current configuration value from a specific scope.
+func GetScope[T any](sc *Scope, kn Knob[T]) T {
+	k := int(kn)
+	s := sc.get(k)
 	if s == nil {
 		// This shouldn't happen, but we fail graciously by returning
 		// the zero value.
+		var zero T
 		return zero
 	}
 	s.RLock()
@@ -162,38 +209,22 @@ func Get[T any](kn Knob[T]) T {
 	if s.current != nil {
 		return s.current.(T)
 	}
-	if s.initialize != nil {
-		s.once.Do(func() { s.initialize(s) })
-	}
 	if s.parent > 0 {
-		return Get(Knob[T](s.parent))
+		return GetScope(sc, Knob[T](s.parent))
 	}
 	return s.current.(T)
 }
 
-func getState(kn int) *state {
-	regMux.RLock()
-	s := registry[kn]
-	regMux.RUnlock()
-	return s
-}
-
-func setState(kn int, s *state) {
-	regMux.Lock()
-	registry[kn] = s
-	regMux.Unlock()
-}
-
-func deleteState(kn int) {
-	regMux.Lock()
-	delete(registry, kn)
-	regMux.Unlock()
-}
-
+// Set sets value for a new configuration value to the default scope.
 func Set[T any](kn Knob[T], origin Origin, value T) {
-	k := int(kn)
-	s := getState(k)
+	SetScope(DefaultScope(), kn, origin, value)
+}
+
+// SetScope sets value for a new configuration value to a specific scope.
+func SetScope[T any](sc *Scope, kn Knob[T], origin Origin, value T) {
+	s := sc.get(int(kn))
 	if s == nil {
+		// This shouldn't happen.
 		return
 	}
 	s.Lock()
@@ -201,6 +232,7 @@ func Set[T any](kn Knob[T], origin Origin, value T) {
 
 	if origin != Code {
 		if _, ok := s.origins[origin]; !ok {
+			// Update from this origin is not allowed.
 			return
 		}
 	}

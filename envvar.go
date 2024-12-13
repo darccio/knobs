@@ -8,7 +8,7 @@ import (
 // EnvVar represents an env var and an optional transform for remapping the value set at the env var
 type EnvVar struct {
 	Key       string
-	Transform func(s string) string
+	Transform func(s string) (string, error)
 }
 
 // getValue	returns the value set at the env var of e.Key, if set, with whitespace trimmed
@@ -19,8 +19,12 @@ func (e *EnvVar) getValue() string {
 		return ""
 	}
 	v = strings.TrimSpace(v)
-	if e.Transform != nil {
-		return e.Transform(v)
+	if e.Transform == nil {
+		return v
 	}
-	return v
+	tv, err := e.Transform(v)
+	if err != nil {
+		return ""
+	}
+	return tv
 }

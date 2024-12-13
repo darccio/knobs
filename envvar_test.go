@@ -22,7 +22,7 @@ func TestEnvVar(t *testing.T) {
 
 	t.Run("env set - with transform", func(t *testing.T) {
 		t.Setenv("MY_ENV", "something")
-		e := EnvVar{Key: "MY_ENV", Transform: func(s string) string { return "something-else" }}
+		e := EnvVar{Key: "MY_ENV", Transform: func(s string) (string, error) { return "something-else", nil }}
 		v := e.getValue()
 		assert.Equal(t, "something-else", v)
 	})
