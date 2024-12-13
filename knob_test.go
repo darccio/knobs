@@ -70,6 +70,28 @@ func TestInitialize(t *testing.T) {
 		require.Equal(t, "env value", value)
 	})
 
+	t.Run("multi env var with resolve", func(t *testing.T) {
+		t.Setenv("TEST_KNOB_INIT", "env value")
+		t.Setenv("TEST_KNOB_INIT_2", "env_value_2")
+
+		def := &Definition[string]{
+			Default: "default",
+			EnvVars: []EnvVar{{Key: "TEST_KNOB_INIT"}, {Key: "TEST_KNOB_INIT_2"}},
+			Resolve: func(environ map[string]string, decision string) (string, error) {
+				// We override the decision to use the second env var.
+				// This is useful when we want to use a different env var based on the value of another or
+				// for validating that the values of multiple env vars are consistent.
+				return "TEST_KNOB_INIT_2", nil
+			},
+			Parse: ToString,
+		}
+
+		knob := Register(def)
+
+		value := Get(knob)
+		require.Equal(t, "env_value_2", value)
+	})
+
 	t.Run("with envvar transform", func(t *testing.T) {
 		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
 

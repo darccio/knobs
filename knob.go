@@ -17,8 +17,8 @@ var (
 
 var (
 	// ErrInvalidValue is returned when the value cannot be converted to the expected type.
-	// This error is useful when the Clean function fails to convert the value.
-	ErrInvalidValue = errors.New("knobs: invalid value")
+	// This error is useful when the Parse function fails to convert the value.
+	ErrInvalidValue = errors.New("invalid value")
 )
 
 // definition is an internal representation of a configuration definition. See Definition.
@@ -73,34 +73,52 @@ type Definition[T any] struct {
 	Default  T
 	Origins  []Origin // Default and Env origins are implicit
 	EnvVars  []EnvVar
-	Requires []any                   // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
-	Parse    func(string) (T, error) // Parse converts a string to the expected type; ignores the returned value if an error is returned
+	Requires []any                                                            // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
+	Resolve  func(environ map[string]string, decision string) (string, error) // Resolve handles validation and conditional behavior
+	Parse    func(string) (T, error)                                          // Parse converts a string to the expected type; ignores the returned value if an error is returned
 }
 
 func (def *Definition[T]) initializer(s *state) {
 	s.current = def.Default
+	if len(def.EnvVars) == 0 {
+		return
+	}
 	var (
-		v string
-		e EnvVar
+		current = ""
+		environ = make(map[string]string, len(def.EnvVars))
 	)
-	for _, e = range def.EnvVars {
-		if v = e.getValue(); v != "" {
-			break
+	for _, e := range def.EnvVars {
+		v := e.getValue()
+		if v == "" {
+			continue
+		}
+		environ[e.Key] = v
+		if len(environ) == 1 {
+			current = e.Key
 		}
 	}
-	if v == "" {
+	if current == "" {
 		return
 	}
 	s.origin = Env
+	if def.Resolve != nil {
+		// Our current value found isn't definitive yet
+		key, err := def.Resolve(environ, current)
+		if err != nil {
+			logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+			return
+		}
+		current = key
+	}
 	if def.Parse == nil {
-		logFn("knobs: missing Parse function for environment variable %q", e.Key)
+		logFn("missing Parse function for environment variable %q", current)
 		return
 	}
-	if final, err := def.Parse(v); err == nil {
+	if final, err := def.Parse(environ[current]); err == nil {
 		s.current = final
 		return
 	} else {
-		logFn("%s", err.Error())
+		logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
 	}
 }
 
