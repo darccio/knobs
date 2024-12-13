@@ -73,8 +73,8 @@ type Definition[T any] struct {
 	Default  T
 	Origins  []Origin // Default and Env origins are implicit
 	EnvVars  []EnvVar
-	Requires []any // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
-	Parse    func(string) (T, error)
+	Requires []any                   // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
+	Parse    func(string) (T, error) // Parse converts a string to the expected type; ignores the returned value if an error is returned
 }
 
 func (def *Definition[T]) initializer(s *state) {
