@@ -105,20 +105,20 @@ func (def *Definition[T]) initializer(s *state) {
 		// Our current value found isn't definitive yet
 		key, err := def.Resolve(environ, current)
 		if err != nil {
-			logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+			logf("knobs: ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
 			return
 		}
 		current = key
 	}
 	if def.Parse == nil {
-		logFn("missing Parse function for environment variable %q", current)
+		logf("knobs: missing Parse function for environment variable %q", current)
 		return
 	}
 	if final, err := def.Parse(environ[current]); err == nil {
 		s.current = final
 		return
 	} else {
-		logFn("ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+		logf("knobs: ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
 	}
 }
 
