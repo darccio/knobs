@@ -73,9 +73,17 @@ type Definition[T any] struct {
 	Default  T
 	Origins  []Origin // Default and Env origins are implicit
 	EnvVars  []EnvVar
-	Requires []any                                                            // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
-	Resolve  func(environ map[string]string, decision string) (string, error) // Resolve handles validation and conditional behavior
-	Parse    func(string) (T, error)                                          // Parse converts a string to the expected type; ignores the returned value if an error is returned
+	Requires []any // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
+	// Resolve handles validation and conditional behavior.
+	// It must not call Get/GetScope/Set/SetScope on the knob currently being initialized: each
+	// knob's initialization is guarded by a non-reentrant sync.Once, so a same-knob call from
+	// within Resolve deadlocks. Calls to other, already-registered knobs are safe.
+	Resolve func(environ map[string]string, decision string) (string, error)
+	// Parse converts a string to the expected type; ignores the returned value if an error is returned.
+	// It must not call Get/GetScope/Set/SetScope on the knob currently being initialized: each
+	// knob's initialization is guarded by a non-reentrant sync.Once, so a same-knob call from
+	// within Parse deadlocks. Calls to other, already-registered knobs are safe.
+	Parse func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
