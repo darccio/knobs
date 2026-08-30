@@ -102,18 +102,31 @@ type Definition[T any] struct {
 	// It must not call Get/GetScope/Set/SetScope on the knob currently being initialized: each
 	// knob's initialization is guarded by a non-reentrant sync.Once, so a same-knob call from
 	// within Resolve deadlocks. Calls to other, already-registered knobs are safe.
+	// Resolve runs at most once per (knob, scope) pair, on first access. If it panics, the
+	// panic propagates to the caller of Get/GetScope, and -- because sync.Once treats a
+	// panicking call as complete -- Resolve never runs again for this (knob, scope) pair; the
+	// knob is left readable at its Default on every subsequent Get.
 	Resolve func(environ map[string]string, decision string) (string, error)
 	// Parse converts a string to the expected type; ignores the returned value if an error is returned.
 	// It must not call Get/GetScope/Set/SetScope on the knob currently being initialized: each
 	// knob's initialization is guarded by a non-reentrant sync.Once, so a same-knob call from
 	// within Parse deadlocks. Calls to other, already-registered knobs are safe.
+	// Parse runs at most once per (knob, scope) pair, on first access. If it panics, the panic
+	// propagates to the caller of Get/GetScope, and -- because sync.Once treats a panicking
+	// call as complete -- Parse never runs again for this (knob, scope) pair; the knob is left
+	// readable at its Default on every subsequent Get.
 	Parse func(string) (T, error)
 }
 
 func (def *Definition[T]) initializer(s *state) {
+	// Phase 1: commit the Default immediately, before any user callback runs. A panicking
+	// Transform/Resolve/Parse leaves sync.Once permanently "done" without a retry, so this is
+	// the only commit that's guaranteed to have happened by the time such a panic is caught
+	// upstream -- it must already be correct and correctly attributed to Default.
 	s.mu.Lock()
-	s.val = slot{v: def.Default, hasValue: true}
+	s.val = slot{v: def.Default, origin: Default, hasValue: true}
 	s.mu.Unlock()
+
 	if len(def.EnvVars) == 0 {
 		return
 	}
@@ -122,26 +135,35 @@ func (def *Definition[T]) initializer(s *state) {
 		environ = make(map[string]string, len(def.EnvVars))
 	)
 	for _, e := range def.EnvVars {
-		v := e.getValue()
+		v, err := e.getValue()
+		if err != nil {
+			logf("knobs: ignoring env var %q: %s", e.Key, err.Error())
+			continue
+		}
 		if v == "" {
 			continue
 		}
 		environ[e.Key] = v
 		if len(environ) == 1 {
 			current = e.Key
+		} else {
+			logf("knobs: environment variable %q=%q ignored: %q is already set and takes precedence", e.Key, v, current)
 		}
 	}
 	if current == "" {
 		return
 	}
-	s.mu.Lock()
-	s.val.origin = Env
-	s.mu.Unlock()
 	if def.Resolve != nil {
 		// Our current value found isn't definitive yet
 		key, err := def.Resolve(environ, current)
 		if err != nil {
 			logf("knobs: ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+			return
+		}
+		if _, ok := environ[key]; !ok {
+			// A typo'd/unknown key would otherwise reach Parse(""), which for some Parse
+			// functions (e.g. ToString) succeeds and silently sets the knob to "".
+			logf("knobs: Resolve returned unknown key %q, keeping default %v", key, def.Default)
 			return
 		}
 		current = key
@@ -150,14 +172,17 @@ func (def *Definition[T]) initializer(s *state) {
 		logf("knobs: missing Parse function for environment variable %q", current)
 		return
 	}
-	if final, err := def.Parse(environ[current]); err == nil {
-		s.mu.Lock()
-		s.val.v = final
-		s.mu.Unlock()
-		return
-	} else {
+	final, err := def.Parse(environ[current])
+	if err != nil {
 		logf("knobs: ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
+		return
 	}
+
+	// Phase 2: commit the parsed value, and only now claim Env provenance -- never before
+	// Parse has actually validated it.
+	s.mu.Lock()
+	s.val = slot{v: final, origin: Env, hasValue: true}
+	s.mu.Unlock()
 }
 
 // Origin defines a known configuration source.
