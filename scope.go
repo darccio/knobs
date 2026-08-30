@@ -23,6 +23,11 @@ func (sc *Scope) get(kn int) *state {
 		regMux.RLock()
 		d := registry[kn]
 		regMux.RUnlock()
+		if d == nil {
+			// kn was never registered (or is a forged/zero id): no definition
+			// exists to seed a state from, so there is nothing to cache.
+			return nil
+		}
 
 		sc.mu.Lock()
 		// NOTE: `=`, not `:=`, in the next line. With `:=` this still
@@ -50,16 +55,6 @@ func (sc *Scope) get(kn int) *state {
 	// deadlocking on this scope's own lock.
 	s.init()
 	return s
-}
-
-func (sc *Scope) set(kn int, s *state) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
-	if sc.states == nil {
-		sc.states = make(map[int]*state)
-	}
-	sc.states[kn] = s
 }
 
 func (sc *Scope) delete(kn int) {

@@ -2,6 +2,7 @@ package knobs
 
 import (
 	"errors"
+	"maps"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -9,10 +10,9 @@ import (
 
 // Global variables
 var (
-	counter  atomic.Int32
+	counter  atomic.Int64
 	regMux   sync.RWMutex
-	registry map[int]*definition
-	regOnce  sync.Once // Ensures the registry is created only once
+	registry = make(map[int]*definition)
 )
 
 var (
@@ -23,9 +23,9 @@ var (
 
 // definition is an internal representation of a configuration definition. See Definition.
 type definition struct {
-	def     any
 	init    initializer
 	origins map[Origin]struct{}
+	parent  int // 0 for a root knob; the parent's registry id for a derived knob
 }
 
 // slot holds a knob's current value together with its provenance and
@@ -42,14 +42,13 @@ type state struct {
 	mu sync.RWMutex
 	*definition
 
-	once   sync.Once
-	val    slot
-	parent int
+	once sync.Once
+	val  slot
 }
 
 func (s *state) init() {
-	if s.definition == nil {
-		// Knob is a derived knob and has no definition.
+	if s.definition == nil || s.definition.init == nil {
+		// Knob is unregistered, or is a derived knob with no initializer of its own.
 		return
 	}
 	s.once.Do(func() { s.definition.init(s) })
@@ -94,7 +93,9 @@ type Definition[T any] struct {
 	// represents this knob's own baseline, not an external source that can push
 	// a value to it. Listing Env here only affects external Set(kn, Env, v)
 	// calls — it has no effect on initialization from EnvVars, which always
-	// applies regardless of what's listed here.
+	// applies regardless of what's listed here. A knob derived via Derive
+	// inherits this set from its root at Derive time; it cannot be changed
+	// afterward.
 	Origins  []Origin
 	EnvVars  []EnvVar
 	Requires []any // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
@@ -202,10 +203,17 @@ const (
 // Knob defines an available configuration.
 type Knob[T any] int
 
-// Register adds a new configuration to the default scope.
+// Register adds a new configuration, valid in every Scope.
 // Register returns a Knob that can be used to retrieve the configuration value. A Knob can be used in multiple scopes.
 // Register is not idempotent, so calling it multiple times with the same Definition will create multiple Knobs.
+// Passing a nil Definition logs and returns the zero Knob, which behaves like any other unregistered id.
 func Register[T any](def *Definition[T]) Knob[T] {
+	if def == nil {
+		logf("knobs: Register called with a nil Definition; returning the zero Knob")
+		var zero Knob[T]
+		return zero
+	}
+
 	var (
 		k       = int(counter.Add(1))
 		origins = make(map[Origin]struct{}, len(def.Origins))
@@ -214,40 +222,50 @@ func Register[T any](def *Definition[T]) Knob[T] {
 		origins[o] = struct{}{}
 	}
 	d := &definition{
-		def:     def.Default,
 		init:    def.initializer,
 		origins: origins,
 	}
+
 	regMux.Lock()
-	defer regMux.Unlock()
-
-	regOnce.Do(func() {
-		registry = make(map[int]*definition)
-	})
-
 	registry[k] = d
+	regMux.Unlock()
+
 	return Knob[T](k)
 }
 
-// Derive creates a new configuration based on a parent Knob from the default scope.
-// Derive returns a Knob initialized with the parent value, which can either be kept or overwritten with a new value.
-// The parent Knob can be another derived Knob.
+// Derive creates a new configuration based on a parent Knob, valid in every Scope.
+// A derived Knob has no value of its own until Set: until then, Get dynamically falls through to
+// the parent's current value -- this is a live fallthrough, not a one-time snapshot, so a derived
+// knob sees values set on its parent after the derive. The parent Knob can itself be another
+// derived Knob, in which case the fallback chain and allowed Set origins are resolved transitively.
 // Derive is not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
 func Derive[T any](parent Knob[T]) Knob[T] {
-	return DeriveScope(DefaultScope(), parent)
-}
+	pid := int(parent)
 
-// DeriveScope creates a new configuration based on a parent Knob from a specific scope.
-// DeriveScope returns a Knob initialized with the parent value, which can either be kept or overwritten with a new value.
-// The parent Knob can be another derived Knob.
-// DeriveScope is not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
-func DeriveScope[T any](sc *Scope, parent Knob[T]) Knob[T] {
-	dk := int(counter.Add(1))
-	s := &state{
-		// Derived Knobs fall back to their parent's value if they don't have their own.
-		parent: int(parent),
+	regMux.RLock()
+	parentDef, ok := registry[pid]
+	regMux.RUnlock()
+
+	var origins map[Origin]struct{}
+	if ok {
+		origins = maps.Clone(parentDef.origins)
+	} else {
+		logf("knobs: Derive called with unregistered parent knob %d; the derived knob will have no allowed Set origins", pid)
+		origins = map[Origin]struct{}{}
 	}
-	sc.set(dk, s)
+
+	dk := int(counter.Add(1))
+	d := &definition{
+		// init is nil: a derived knob has no EnvVars/Parse/Resolve of its own;
+		// its value always comes from Set or falls through to parent.
+		origins: origins,
+		parent:  pid,
+	}
+
+	regMux.Lock()
+	registry[dk] = d
+	regMux.Unlock()
+
 	return Knob[T](dk)
 }
 
@@ -261,15 +279,20 @@ const maxDeriveDepth = 64
 // GetScope retrieves the current configuration value from a specific scope.
 func GetScope[T any](sc *Scope, kn Knob[T]) T {
 	var zero T
+	if sc == nil {
+		logf("knobs: GetScope called with a nil *Scope for knob %d; returning the zero value", int(kn))
+		return zero
+	}
 	id := int(kn)
 	for hops := 0; hops < maxDeriveDepth; hops++ {
 		s := sc.get(id)
 		if s == nil {
-			logf("knobs: GetScope called with a nil *Scope for knob %d; returning the zero value", id)
+			warnOnce(id, "knobs: knob %d is not registered; returning the zero value", id)
 			return zero
 		}
+
 		s.mu.RLock()
-		val, parent := s.val, s.parent
+		val := s.val
 		s.mu.RUnlock()
 
 		if val.hasValue {
@@ -287,8 +310,9 @@ func GetScope[T any](sc *Scope, kn Knob[T]) T {
 			warnOnce(id, "knobs: knob %d holds a value that is not the requested type; returning the zero value", id)
 			return zero
 		}
+		parent := s.parent // promoted from *definition; set once at Register/Derive and never mutated after, so safe to read without s.mu
 		if parent <= 0 {
-			warnOnce(id, "knobs: knob %d has no value and no parent (unregistered or forged knob id); returning the zero value", id)
+			warnOnce(id, "knobs: knob %d has no value and no parent (a root knob's Default should always be set, or a knob was derived from a forged/zero id); returning the zero value", id)
 			return zero
 		}
 		id = parent
@@ -305,19 +329,19 @@ func Set[T any](kn Knob[T], origin Origin, value T) {
 // SetScope sets value for a new configuration value to a specific scope.
 func SetScope[T any](sc *Scope, kn Knob[T], origin Origin, value T) {
 	id := int(kn)
+	if sc == nil {
+		logf("knobs: SetScope called with a nil *Scope for knob %d; ignoring", id)
+		return
+	}
 	s := sc.get(id)
 	if s == nil {
-		logf("knobs: SetScope called with a nil *Scope for knob %d; ignoring", id)
+		logf("knobs: SetScope called with unregistered knob %d; ignoring", id)
 		return
 	}
 
 	if origin != Code {
 		if origin == Default {
 			logf("knobs: rejected Set(%d, Default, ...): Default is not a settable origin", id)
-			return
-		}
-		if s.definition == nil {
-			logf("knobs: rejected Set(%d, %v, ...): knob has no configured Origins (derived knob)", id, origin)
 			return
 		}
 		if _, ok := s.origins[origin]; !ok {

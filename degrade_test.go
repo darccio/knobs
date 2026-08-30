@@ -10,8 +10,9 @@ import (
 
 // TestGetZeroValueKnobDoesNotPanic confirms that Get on a zero-value,
 // never-registered Knob[T] degrades to the type's zero value instead of
-// panicking. This is the "state.val.hasValue is false and there is no
-// parent" branch of GetScope.
+// panicking. Since Step 5, Scope.get returns nil outright for any id absent
+// from the registry -- including id 0, which counter.Add(1) never issues --
+// so this hits GetScope's "s == nil" branch, not a cached junk state.
 //
 // We deliberately do not assert anything about whether a log was emitted:
 // knob id 0 is shared by every zero-value Knob[T] in the whole test binary
@@ -105,24 +106,18 @@ func TestGetDefinitionAnyNilDefaultReturnsNilWithoutLogging(t *testing.T) {
 }
 
 // TestDerivedKnobFromForeignScopeDoesNotPanic confirms that reading a
-// derived knob from a scope other than the one it was derived in degrades
-// to the zero value instead of panicking. A derived knob's *state only
-// exists in the scope it was created in; looking it up from a foreign scope
-// auto-vivifies a brand new, definition-less, parent-less *state there, so
-// there is nothing to fall back to.
-//
-// The result is explicitly the ZERO value, NOT the parent's default value:
-// making derived knobs resolve their parent correctly across scopes
-// requires derived knobs to become registry-backed, which is a LATER step
-// of this campaign. This step only fixes the PANIC, converting it into a
-// graceful (if currently wrong) zero-value degrade.
+// derived knob from a scope other than the one it was derived in resolves
+// correctly instead of panicking. Since Step 5, a derived knob's parent link
+// lives on its registry-wide *definition, not on any single scope's *state,
+// so any scope -- including one that has never seen this knob before -- can
+// independently resolve the fallback chain via the registry.
 func TestDerivedKnobFromForeignScopeDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	base := Register(&Definition[string]{
 		Default: "parent-default",
 	})
-	derived := Derive(base) // lands in the default scope
+	derived := Derive(base)
 
 	sc2 := NewScope()
 
@@ -130,20 +125,15 @@ func TestDerivedKnobFromForeignScopeDoesNotPanic(t *testing.T) {
 	require.NotPanics(t, func() {
 		value = GetScope(sc2, derived)
 	})
-	require.Equal(t, "", value)
+	require.Equal(t, "parent-default", value)
 }
 
-// TestSetDerivedKnobNonCodeOriginDoesNotPanicAndIsRejected confirms that
-// Set-ing a derived knob with a non-Code origin no longer nil-dereferences
-// (a derived state's embedded *definition is nil, and the old code
-// unconditionally read s.origins without checking that first), and that the
-// rejected write does not silently take effect.
-//
-// Teaching derived knobs to inherit their parent's allowed Origins is a
-// LATER step's feature (it requires promoting origins/parent resolution
-// onto a shared, registry-backed representation); this step only fixes the
-// crash, so every non-Code Set on a derived knob is rejected for now.
-func TestSetDerivedKnobNonCodeOriginDoesNotPanicAndIsRejected(t *testing.T) {
+// TestSetDerivedKnobInheritsParentOrigins confirms that a derived knob's
+// allowed Set origins are inherited from its root at Derive time: an origin
+// the root's Definition lists is accepted on the derived knob, and one it
+// doesn't list is still rejected -- exercising both the accept and reject
+// paths through the same inherited-origins mechanism.
+func TestSetDerivedKnobInheritsParentOrigins(t *testing.T) {
 	t.Parallel()
 
 	base := Register(&Definition[string]{
@@ -153,10 +143,22 @@ func TestSetDerivedKnobNonCodeOriginDoesNotPanicAndIsRejected(t *testing.T) {
 	derived := Derive(base)
 
 	require.NotPanics(t, func() {
-		Set(derived, Env, "should not apply")
+		Set(derived, Env, "applied-via-inherited-origin")
 	})
+	require.Equal(t, "applied-via-inherited-origin", Get(derived))
+	require.Equal(t, "base-default", Get(base))
 
-	require.Equal(t, Get(base), Get(derived))
+	otherBase := Register(&Definition[string]{
+		Default: "other-base-default",
+		// Origins intentionally left empty: no non-Code origin is allowed,
+		// so a knob derived from it should inherit that same restriction.
+	})
+	otherDerived := Derive(otherBase)
+
+	require.NotPanics(t, func() {
+		Set(otherDerived, Env, "should-not-apply")
+	})
+	require.Equal(t, "other-base-default", Get(otherDerived))
 }
 
 // TestSetRejectsDefaultOrigin confirms that Default can never be used as a
