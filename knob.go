@@ -28,15 +28,23 @@ type definition struct {
 	origins map[Origin]struct{}
 }
 
+// slot holds a knob's current value together with its provenance and
+// whether it has ever been set at all, grouped so all three move together
+// under a single lock acquisition.
+type slot struct {
+	v        any
+	origin   Origin
+	hasValue bool // distinguishes "unset" from "set to a nil interface value"
+}
+
 // state is an instance of a configuration definition.
 type state struct {
-	sync.RWMutex
+	mu sync.RWMutex
 	*definition
 
-	once    sync.Once
-	current any
-	origin  Origin // Last origin
-	parent  int
+	once   sync.Once
+	val    slot
+	parent int
 }
 
 func (s *state) init() {
@@ -45,6 +53,16 @@ func (s *state) init() {
 		return
 	}
 	s.once.Do(func() { s.definition.init(s) })
+}
+
+// warnedKnobs suppresses repeat degraded-read logs, keyed by knob id, so a
+// misused knob logs once instead of flooding a hot Get loop.
+var warnedKnobs sync.Map
+
+func warnOnce(id int, format string, args ...any) {
+	if _, already := warnedKnobs.LoadOrStore(id, struct{}{}); !already {
+		logf(format, args...)
+	}
 }
 
 type initializer func(*state)
@@ -70,8 +88,14 @@ var (
 
 // Definition declares how a configuration is sourced.
 type Definition[T any] struct {
-	Default  T
-	Origins  []Origin // Default and Env origins are implicit
+	Default T
+	// Origins lists the origins, in addition to Code (always allowed), that may
+	// write this knob via Set/SetScope. Default is never a valid Set origin: it
+	// represents this knob's own baseline, not an external source that can push
+	// a value to it. Listing Env here only affects external Set(kn, Env, v)
+	// calls — it has no effect on initialization from EnvVars, which always
+	// applies regardless of what's listed here.
+	Origins  []Origin
 	EnvVars  []EnvVar
 	Requires []any // Knobs that must be set to a non-zero value before this one; used only for documentation purposes
 	// Resolve handles validation and conditional behavior.
@@ -87,7 +111,9 @@ type Definition[T any] struct {
 }
 
 func (def *Definition[T]) initializer(s *state) {
-	s.current = def.Default
+	s.mu.Lock()
+	s.val = slot{v: def.Default, hasValue: true}
+	s.mu.Unlock()
 	if len(def.EnvVars) == 0 {
 		return
 	}
@@ -108,7 +134,9 @@ func (def *Definition[T]) initializer(s *state) {
 	if current == "" {
 		return
 	}
-	s.origin = Env
+	s.mu.Lock()
+	s.val.origin = Env
+	s.mu.Unlock()
 	if def.Resolve != nil {
 		// Our current value found isn't definitive yet
 		key, err := def.Resolve(environ, current)
@@ -123,7 +151,9 @@ func (def *Definition[T]) initializer(s *state) {
 		return
 	}
 	if final, err := def.Parse(environ[current]); err == nil {
-		s.current = final
+		s.mu.Lock()
+		s.val.v = final
+		s.mu.Unlock()
 		return
 	} else {
 		logf("knobs: ignoring %q=%q, setting to default %v: %s", current, environ[current], def.Default, err.Error())
@@ -201,26 +231,45 @@ func Get[T any](kn Knob[T]) T {
 	return GetScope(DefaultScope(), kn)
 }
 
+const maxDeriveDepth = 64
+
 // GetScope retrieves the current configuration value from a specific scope.
 func GetScope[T any](sc *Scope, kn Knob[T]) T {
-	k := int(kn)
-	s := sc.get(k)
-	if s == nil {
-		// This shouldn't happen, but we fail graciously by returning
-		// the zero value.
-		var zero T
-		return zero
-	}
-	s.RLock()
-	defer s.RUnlock()
+	var zero T
+	id := int(kn)
+	for hops := 0; hops < maxDeriveDepth; hops++ {
+		s := sc.get(id)
+		if s == nil {
+			logf("knobs: GetScope called with a nil *Scope for knob %d; returning the zero value", id)
+			return zero
+		}
+		s.mu.RLock()
+		val, parent := s.val, s.parent
+		s.mu.RUnlock()
 
-	if s.current != nil {
-		return s.current.(T)
+		if val.hasValue {
+			if val.v == nil {
+				// Only reachable when T is an interface type, where nil IS
+				// the stored value (e.g. Definition[any]{Default: nil}).
+				// This branch MUST come before the type assertion below: a
+				// type assertion on a nil interface value fails even when
+				// the target type is `any` itself.
+				return zero
+			}
+			if v, ok := val.v.(T); ok {
+				return v
+			}
+			warnOnce(id, "knobs: knob %d holds a value that is not the requested type; returning the zero value", id)
+			return zero
+		}
+		if parent <= 0 {
+			warnOnce(id, "knobs: knob %d has no value and no parent (unregistered or forged knob id); returning the zero value", id)
+			return zero
+		}
+		id = parent
 	}
-	if s.parent > 0 {
-		return GetScope(sc, Knob[T](s.parent))
-	}
-	return s.current.(T)
+	warnOnce(id, "knobs: exceeded maximum derive depth (%d) resolving knob %d; returning the zero value", maxDeriveDepth, id)
+	return zero
 }
 
 // Set sets value for a new configuration value to the default scope.
@@ -230,20 +279,29 @@ func Set[T any](kn Knob[T], origin Origin, value T) {
 
 // SetScope sets value for a new configuration value to a specific scope.
 func SetScope[T any](sc *Scope, kn Knob[T], origin Origin, value T) {
-	s := sc.get(int(kn))
+	id := int(kn)
+	s := sc.get(id)
 	if s == nil {
-		// This shouldn't happen.
+		logf("knobs: SetScope called with a nil *Scope for knob %d; ignoring", id)
 		return
 	}
-	s.Lock()
-	defer s.Unlock()
 
 	if origin != Code {
+		if origin == Default {
+			logf("knobs: rejected Set(%d, Default, ...): Default is not a settable origin", id)
+			return
+		}
+		if s.definition == nil {
+			logf("knobs: rejected Set(%d, %v, ...): knob has no configured Origins (derived knob)", id, origin)
+			return
+		}
 		if _, ok := s.origins[origin]; !ok {
-			// Update from this origin is not allowed.
+			logf("knobs: rejected Set(%d, %v, ...): origin not in allowed set %v", id, origin, s.origins)
 			return
 		}
 	}
-	s.origin = origin
-	s.current = value
+
+	s.mu.Lock()
+	s.val = slot{v: value, origin: origin, hasValue: true}
+	s.mu.Unlock()
 }
