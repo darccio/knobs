@@ -38,7 +38,7 @@ func (sc *Scope) get(kn int) *state {
 				sc.states = make(map[int]*state)
 			}
 			s = &state{
-				definition: d,
+				def: d,
 			}
 			sc.states[kn] = s
 		}

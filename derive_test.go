@@ -42,7 +42,7 @@ func TestDeriveResolvesAfterScopeDelete(t *testing.T) {
 
 	require.Equal(t, "base-default", GetScope(sc, derived))
 
-	sc.delete(int(base))
+	sc.delete(base.id)
 
 	require.Equal(t, "base-default", GetScope(sc, derived))
 }
@@ -60,7 +60,7 @@ func TestRegisterNilDefinitionReturnsZeroKnob(t *testing.T) {
 	// installing the message-recording logger below, so the message count
 	// asserted below reflects only Register(nil)'s own log regardless of
 	// whether some other test already happened to touch knob id 0 first.
-	_ = Get(Knob[string](0))
+	_ = Get(Knob[string]{})
 
 	var (
 		mu       sync.Mutex
@@ -76,7 +76,7 @@ func TestRegisterNilDefinitionReturnsZeroKnob(t *testing.T) {
 	require.NotPanics(t, func() {
 		knob = Register[string](nil)
 	})
-	require.Equal(t, Knob[string](0), knob)
+	require.Equal(t, Knob[string]{}, knob)
 	require.Equal(t, "", Get(knob))
 
 	mu.Lock()
@@ -95,7 +95,7 @@ func TestForgedIdAllocatesNoState(t *testing.T) {
 	sc := NewScope()
 	before := len(sc.states)
 
-	forged := Knob[string](987654321)
+	forged := Knob[string]{id: 987654321}
 	var value string
 	require.NotPanics(t, func() {
 		value = GetScope(sc, forged)
@@ -122,7 +122,7 @@ func TestDeriveFromUnregisteredParentLogsButStillCreatesKnob(t *testing.T) {
 		messages = append(messages, fmt.Sprintf(format, args...))
 	})
 
-	forgedParent := Knob[string](123456789)
+	forgedParent := Knob[string]{id: 123456789}
 	var derived Knob[string]
 	require.NotPanics(t, func() {
 		derived = Derive(forgedParent)

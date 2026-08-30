@@ -52,7 +52,7 @@ func TestGetForgedKnobWrongTypeReturnsZeroAndLogsOnce(t *testing.T) {
 	stringKnob := Register(&Definition[string]{
 		Default: "a-string-value",
 	})
-	forged := Knob[int](int(stringKnob))
+	forged := Knob[int]{id: stringKnob.id}
 
 	var first, second int
 	require.NotPanics(t, func() {
@@ -67,7 +67,7 @@ func TestGetForgedKnobWrongTypeReturnsZeroAndLogsOnce(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Len(t, messages, 1)
-	require.Contains(t, messages[0], fmt.Sprintf("%d", int(stringKnob)))
+	require.Contains(t, messages[0], fmt.Sprintf("%d", stringKnob.id))
 }
 
 // TestGetDefinitionAnyNilDefaultReturnsNilWithoutLogging is the regression

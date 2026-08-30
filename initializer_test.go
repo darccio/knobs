@@ -51,7 +51,9 @@ func TestResolveReturningUnknownKeyKeepsDefault(t *testing.T) {
 
 // TestOriginReflectsActualSource is the regression test for bug (1): origin
 // must only ever be reported as Env once Parse has actually validated the
-// value, never merely because some env var was found.
+// value, never merely because some env var was found. Also doubles as
+// GetWithOrigin's own regression coverage, since Step 6 added it specifically
+// to make this contract observable through the public API.
 func TestOriginReflectsActualSource(t *testing.T) {
 	t.Run("failed parse keeps origin at Default", func(t *testing.T) {
 		envKey := "KNOBS_ORIGIN_FAILED_PARSE_TEST_VAR"
@@ -64,13 +66,8 @@ func TestOriginReflectsActualSource(t *testing.T) {
 		}
 		knob := Register(def)
 
-		value := Get(knob)
+		value, origin := GetWithOrigin(knob)
 		require.Equal(t, 7, value)
-
-		s := DefaultScope().get(int(knob))
-		s.mu.RLock()
-		origin := s.val.origin
-		s.mu.RUnlock()
 		require.Equal(t, Default, origin)
 	})
 
@@ -85,13 +82,8 @@ func TestOriginReflectsActualSource(t *testing.T) {
 		}
 		knob := Register(def)
 
-		value := Get(knob)
+		value, origin := GetWithOrigin(knob)
 		require.Equal(t, 42, value)
-
-		s := DefaultScope().get(int(knob))
-		s.mu.RLock()
-		origin := s.val.origin
-		s.mu.RUnlock()
 		require.Equal(t, Env, origin)
 	})
 }

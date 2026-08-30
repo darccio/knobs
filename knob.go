@@ -3,6 +3,7 @@ package knobs
 import (
 	"errors"
 	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,7 @@ var (
 
 // definition is an internal representation of a configuration definition. See Definition.
 type definition struct {
-	init    initializer
+	initFn  initializer
 	origins map[Origin]struct{}
 	parent  int // 0 for a root knob; the parent's registry id for a derived knob
 }
@@ -37,21 +38,25 @@ type slot struct {
 	hasValue bool // distinguishes "unset" from "set to a nil interface value"
 }
 
-// state is an instance of a configuration definition.
+// state is an instance of a configuration definition. *definition is a named field, not an
+// anonymous embed: state.init (a method) and definition.initFn (a field) used to have similar
+// enough names that embedding created a promotion-shadowing hazard -- renaming or deleting one
+// could silently start resolving to the other, with different semantics, without a compiler
+// error. Naming the field forces every access site to be explicit instead.
 type state struct {
-	mu sync.RWMutex
-	*definition
+	mu  sync.RWMutex
+	def *definition
 
 	once sync.Once
 	val  slot
 }
 
 func (s *state) init() {
-	if s.definition == nil || s.definition.init == nil {
+	if s.def == nil || s.def.initFn == nil {
 		// Knob is unregistered, or is a derived knob with no initializer of its own.
 		return
 	}
-	s.once.Do(func() { s.definition.init(s) })
+	s.once.Do(func() { s.def.initFn(s) })
 }
 
 // warnedKnobs suppresses repeat degraded-read logs, keyed by knob id, so a
@@ -200,8 +205,13 @@ const (
 	Code
 )
 
-// Knob defines an available configuration.
-type Knob[T any] int
+// Knob defines an available configuration. Its representation is deliberately opaque: unlike a
+// plain int, a Knob[T] cannot be forged from an arbitrary int outside this package, which closes
+// off a class of type-confusion bugs where a forged Knob[T] of the wrong T could silently read
+// another knob's value or permanently corrupt one. Comparable and usable as a map key.
+type Knob[T any] struct {
+	id int
+}
 
 // Register adds a new configuration, valid in every Scope.
 // Register returns a Knob that can be used to retrieve the configuration value. A Knob can be used in multiple scopes.
@@ -214,15 +224,25 @@ func Register[T any](def *Definition[T]) Knob[T] {
 		return zero
 	}
 
+	// Snapshot def: resolution is lazy (first Get), and def.initializer is a method value bound
+	// to whatever *Definition[T] it's given. Binding it to the caller's own pointer would let a
+	// caller who mutates def.Default/Parse/EnvVars after Register but before the first Get race
+	// against whichever goroutine's Get triggers the initializer. EnvVars is a slice (a reference
+	// type), so copying the struct alone isn't enough for it -- it needs its own clone. The other
+	// fields (Default, Parse, Resolve, Origins) are copied by value or are already-immutable
+	// function values, so the struct copy alone is sufficient for them.
+	defCopy := *def
+	defCopy.EnvVars = slices.Clone(def.EnvVars)
+
 	var (
 		k       = int(counter.Add(1))
-		origins = make(map[Origin]struct{}, len(def.Origins))
+		origins = make(map[Origin]struct{}, len(defCopy.Origins))
 	)
-	for _, o := range def.Origins {
+	for _, o := range defCopy.Origins {
 		origins[o] = struct{}{}
 	}
 	d := &definition{
-		init:    def.initializer,
+		initFn:  defCopy.initializer,
 		origins: origins,
 	}
 
@@ -230,7 +250,7 @@ func Register[T any](def *Definition[T]) Knob[T] {
 	registry[k] = d
 	regMux.Unlock()
 
-	return Knob[T](k)
+	return Knob[T]{id: k}
 }
 
 // Derive creates a new configuration based on a parent Knob, valid in every Scope.
@@ -240,7 +260,7 @@ func Register[T any](def *Definition[T]) Knob[T] {
 // derived Knob, in which case the fallback chain and allowed Set origins are resolved transitively.
 // Derive is not idempotent, so calling it multiple times with the same parent will create multiple Knobs.
 func Derive[T any](parent Knob[T]) Knob[T] {
-	pid := int(parent)
+	pid := parent.id
 
 	regMux.RLock()
 	parentDef, ok := registry[pid]
@@ -256,7 +276,7 @@ func Derive[T any](parent Knob[T]) Knob[T] {
 
 	dk := int(counter.Add(1))
 	d := &definition{
-		// init is nil: a derived knob has no EnvVars/Parse/Resolve of its own;
+		// initFn is nil: a derived knob has no EnvVars/Parse/Resolve of its own;
 		// its value always comes from Set or falls through to parent.
 		origins: origins,
 		parent:  pid,
@@ -266,7 +286,7 @@ func Derive[T any](parent Knob[T]) Knob[T] {
 	registry[dk] = d
 	regMux.Unlock()
 
-	return Knob[T](dk)
+	return Knob[T]{id: dk}
 }
 
 // Get retrieves the current configuration value from the default scope.
@@ -278,17 +298,34 @@ const maxDeriveDepth = 64
 
 // GetScope retrieves the current configuration value from a specific scope.
 func GetScope[T any](sc *Scope, kn Knob[T]) T {
+	v, _ := GetWithOriginScope(sc, kn)
+	return v
+}
+
+// GetWithOrigin retrieves the current configuration value and its Origin from the default scope,
+// both under the same lock acquisition -- unlike calling Get and separately inspecting
+// provenance some other way, this cannot observe a torn read where the value and its reported
+// origin came from two different Sets. For a knob that has no value at all (unregistered, forged,
+// or a derived knob whose parent chain doesn't resolve), the reported Origin is Default, matching
+// Get's zero-value degrade.
+func GetWithOrigin[T any](kn Knob[T]) (T, Origin) {
+	return GetWithOriginScope(DefaultScope(), kn)
+}
+
+// GetWithOriginScope retrieves the current configuration value and its Origin from a specific
+// scope, both under the same lock acquisition. See GetWithOrigin.
+func GetWithOriginScope[T any](sc *Scope, kn Knob[T]) (T, Origin) {
 	var zero T
 	if sc == nil {
-		logf("knobs: GetScope called with a nil *Scope for knob %d; returning the zero value", int(kn))
-		return zero
+		logf("knobs: GetScope called with a nil *Scope for knob %d; returning the zero value", kn.id)
+		return zero, Default
 	}
-	id := int(kn)
+	id := kn.id
 	for hops := 0; hops < maxDeriveDepth; hops++ {
 		s := sc.get(id)
 		if s == nil {
 			warnOnce(id, "knobs: knob %d is not registered; returning the zero value", id)
-			return zero
+			return zero, Default
 		}
 
 		s.mu.RLock()
@@ -302,23 +339,23 @@ func GetScope[T any](sc *Scope, kn Knob[T]) T {
 				// This branch MUST come before the type assertion below: a
 				// type assertion on a nil interface value fails even when
 				// the target type is `any` itself.
-				return zero
+				return zero, val.origin
 			}
 			if v, ok := val.v.(T); ok {
-				return v
+				return v, val.origin
 			}
 			warnOnce(id, "knobs: knob %d holds a value that is not the requested type; returning the zero value", id)
-			return zero
+			return zero, Default
 		}
-		parent := s.parent // promoted from *definition; set once at Register/Derive and never mutated after, so safe to read without s.mu
+		parent := s.def.parent // set once at Register/Derive and never mutated after, so safe to read without s.mu
 		if parent <= 0 {
 			warnOnce(id, "knobs: knob %d has no value and no parent (a root knob's Default should always be set, or a knob was derived from a forged/zero id); returning the zero value", id)
-			return zero
+			return zero, Default
 		}
 		id = parent
 	}
 	warnOnce(id, "knobs: exceeded maximum derive depth (%d) resolving knob %d; returning the zero value", maxDeriveDepth, id)
-	return zero
+	return zero, Default
 }
 
 // Set sets value for a new configuration value to the default scope.
@@ -328,7 +365,7 @@ func Set[T any](kn Knob[T], origin Origin, value T) {
 
 // SetScope sets value for a new configuration value to a specific scope.
 func SetScope[T any](sc *Scope, kn Knob[T], origin Origin, value T) {
-	id := int(kn)
+	id := kn.id
 	if sc == nil {
 		logf("knobs: SetScope called with a nil *Scope for knob %d; ignoring", id)
 		return
@@ -344,8 +381,8 @@ func SetScope[T any](sc *Scope, kn Knob[T], origin Origin, value T) {
 			logf("knobs: rejected Set(%d, Default, ...): Default is not a settable origin", id)
 			return
 		}
-		if _, ok := s.origins[origin]; !ok {
-			logf("knobs: rejected Set(%d, %v, ...): origin not in allowed set %v", id, origin, s.origins)
+		if _, ok := s.def.origins[origin]; !ok {
+			logf("knobs: rejected Set(%d, %v, ...): origin not in allowed set %v", id, origin, s.def.origins)
 			return
 		}
 	}
