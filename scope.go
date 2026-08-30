@@ -2,56 +2,64 @@ package knobs
 
 import (
 	"sync"
-)
-
-var (
-	defMux   sync.Mutex
-	defScope *Scope
+	"sync/atomic"
 )
 
 type Scope struct {
-	sync.RWMutex
-
+	mu     sync.RWMutex
 	states map[int]*state
 }
 
 func (sc *Scope) get(kn int) *state {
-	sc.Lock()
-	defer sc.Unlock()
+	if sc == nil {
+		return nil
+	}
 
+	sc.mu.RLock()
 	s, ok := sc.states[kn]
-	if ok {
-		return s
+	sc.mu.RUnlock()
+
+	if !ok {
+		regMux.RLock()
+		d := registry[kn]
+		regMux.RUnlock()
+		if d == nil {
+			// kn was never registered (or is a forged/zero id): no definition
+			// exists to seed a state from, so there is nothing to cache.
+			return nil
+		}
+
+		sc.mu.Lock()
+		// NOTE: `=`, not `:=`, in the next line. With `:=` this still
+		// compiles, but it shadows the outer `s`, leaving it nil, and
+		// s.init() below would nil-dereference.
+		if s, ok = sc.states[kn]; !ok {
+			if sc.states == nil { // &Scope{} is constructable; guard against a nil map
+				sc.states = make(map[int]*state)
+			}
+			s = &state{
+				def: d,
+			}
+			sc.states[kn] = s
+		}
+		sc.mu.Unlock()
 	}
 
-	// To avoid race conditions, get must create a new state and set it in the scope
-	// because there can be multiple goroutines trying to get and set the same Knob
-	// concurrently.
-	// It also simplifies the code because we don't need to check if the Knob is already
-	// in the scope in multiple places.
-	regMux.RLock()
-	defer regMux.RUnlock()
-
-	s = &state{
-		definition: registry[kn],
-	}
-	// Unconditionally initialize the state.
+	// s.init() MUST run on every call, not only when the state is newly
+	// created above, and MUST run outside sc.mu. sync.Once (inside
+	// state.init) supplies the happens-before edge that lets a fast-path
+	// reader safely observe the initializer's writes; moving this call
+	// inside the `if !ok` block as an "optimization" would reintroduce a
+	// data race. Running it outside sc.mu is what stops a Parse/Resolve
+	// callback that reads a *different* knob in this scope from
+	// deadlocking on this scope's own lock.
 	s.init()
-
-	sc.states[kn] = s // This is safe because we have the lock.
 	return s
 }
 
-func (sc *Scope) set(kn int, s *state) {
-	sc.Lock()
-	defer sc.Unlock()
-
-	sc.states[kn] = s
-}
-
 func (sc *Scope) delete(kn int) {
-	sc.Lock()
-	defer sc.Unlock()
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 
 	delete(sc.states, kn)
 }
@@ -62,20 +70,22 @@ func NewScope() *Scope {
 	}
 }
 
-func DefaultScope() *Scope {
-	defMux.Lock()
-	defer defMux.Unlock()
+var defScope atomic.Pointer[Scope]
 
-	if defScope != nil {
-		return defScope
+func DefaultScope() *Scope {
+	if sc := defScope.Load(); sc != nil {
+		return sc
 	}
-	defScope = NewScope()
-	return defScope
+	sc := NewScope()
+	if defScope.CompareAndSwap(nil, sc) {
+		return sc
+	}
+	// Lost the race to another goroutine's first call; discard our
+	// throwaway Scope and use theirs so every caller observes the same
+	// pointer.
+	return defScope.Load()
 }
 
 func SetDefaultScope(sc *Scope) {
-	defMux.Lock()
-	defer defMux.Unlock()
-
-	defScope = sc
+	defScope.Store(sc)
 }

@@ -93,17 +93,17 @@ func TestInitialize(t *testing.T) {
 	})
 
 	t.Run("with envvar transform", func(t *testing.T) {
-		t.Setenv("TEST_KNOB_INIT", "parentbased_always_on")
+		t.Setenv("TEST_KNOB_INIT", "verbose")
 
 		transform := func(val string) (string, error) {
 			val = strings.TrimSpace(strings.ToLower(val))
 
-			var samplerMapping = map[string]string{
-				"parentbased_always_on":  "1.0",
-				"parentbased_always_off": "0.0",
+			var levelMapping = map[string]string{
+				"verbose": "1.0",
+				"quiet":   "0.0",
 			}
 
-			if val, ok := samplerMapping[val]; ok {
+			if val, ok := levelMapping[val]; ok {
 				return val, nil
 			} else {
 				return "", nil
@@ -222,13 +222,17 @@ func TestDerive(t *testing.T) {
 func TestScopeDelete(t *testing.T) {
 	t.Parallel()
 
+	// A private Scope, not DefaultScope(): DefaultScope() is shared with every other
+	// t.Parallel() test in this package, and this test reads scope.states directly, unlocked --
+	// on the shared default scope that used to race against concurrent Get/Set calls from other
+	// tests. A private scope has no concurrent access to race against.
+	scope := NewScope()
 	knob := Register(&Definition[string]{
 		Default: "default",
 	})
-	Set(knob, Code, "new value")
+	SetScope(scope, knob, Code, "new value")
 
-	ref := int(knob)
-	scope := DefaultScope()
+	ref := knob.id
 
 	_, ok := scope.states[ref]
 	require.True(t, ok)
